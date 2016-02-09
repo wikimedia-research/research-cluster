@@ -1,109 +1,79 @@
-"""
-Converts a MediaWiki XML dump to sorted, flattened JSON documents.
-
-Usage:
-    dump2revdocs <input> <output> [--name-node=<host>] [--jar=<path>] 
-                 [--class=<name>] [--reducers=<num>] [--timeout=<secs>]
-                 [--mapper-mb=<mb>] [--mapper-mb-heap=<mb>]
-                 [--reducer-mb=<mb>] [--reducer-mb-heap=<mb>]
-                 [--force] [--debug]
-
-Options:
-    <input>              The path to an input directory to read XML dump data
-    <output>             The path to an output directory to write revdocs.
-    --name-node=<host>   The host of the cluster name-node
-                         [default: http://nn-ia.s3s.altiscale.com:50070]
-    -j --jar=<path>      Set the mapreduce job jar path
-                         [default: /wmf/jars/wikihadoop-0.2.jar]
-    -c --class=<name>    Set the mapreduce job class
-                         [default: org.wikimedia.wikihadoop.job.JsonRevisionsSortedPerPage]
-    -r --reducers=<num>  Set mapreduce job number of reducers
-                         (defines the maximum number of output files) 
-                         [default: 2000]
-    -t --timeout=<secs>  Set the mapreduce task timeout in seconds
-                         [default: 3600000]
-    --mapper-mb=<mb>        Mapper memory in Yarn  [default: 2048]
-    --mapper-mb-heap=<mb>   Mapper memory in JVM   [default: 1792]
-    --reducer-mb=<mb>       Reducer memory in Yarn [default: 3072]
-    --reducer-mb-heap=<mb>  Reducer memory in JVM  [default: 2816]
-    -f --force              If set, will overwrite old output
-    --debug                 Print debug logging
-"""
+import argparse
 import logging
 import os.path
 import subprocess
 import sys
-
-import docopt
 import hdfs
 
 logger = logging.getLogger(__name__)
 
+
 def main():
-    args = docopt.docopt(__doc__)
-    
-    logging.basicConfig(
-        format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
-    )
-    logger.setLevel(logging.DEBUG if args['--debug'] else logging.INFO)
-    
-    input_path = args['<input>']
-    output_path = args['<output>']
-    
-    name_node = args['--name-node']
-    
-    jar = args['--jar']
-    class_ = args['--class']
-    reducers = int(args['--reducers'])
-    timeout = int(float(args['--timeout']) * 1000)
-    mapper_mb = float(args['--mapper-mb'])
-    mapper_mb_heap = float(args['--mapper-mb-heap'])
-    reducer_mb = float(args['--reducer-mb'])
-    reducer_mb_heap = float(args['--reducer-mb-heap'])
-    
-    force = args['--force']
-    
-    run(input_path, output_path, name_node, jar, class_, timeout, mapper_mb, 
-        mapper_mb_heap, reducer_mb, reducer_mb_heap, reducers, force)
+    parser = argparse.ArgumentParser(description='Converts a MediaWiki XML dump to sorted, flattened JSON documents.')
+
+    parser.add_argument('input', help='path to input directory to read XML dump data')
+    parser.add_argument('output', help='path to output directory to write revdocs')
+    parser.add_argument('--name-node', metavar='HOST', help='cluster name-node', default='http://nn-ia.s3s.altiscale.com:50070')
+    parser.add_argument('-j', '--jar', metavar='PATH', help='mapreduce job jar', default='/wmf/jars/wikihadoop-0.2.jar')
+    parser.add_argument('-c', '--class', dest='job_class', metavar='NAME', help='mapreduce job class', default='org.wikimedia.wikihadoop.job.JsonRevisionsSortedPerPage')
+    parser.add_argument('-r', '--reducers', metavar='NUM', type=int, help='number of reducers for mapreduce job', default=2000)
+    parser.add_argument('-t', '--timeout', metavar='SECS', type=int, help='mapreduce task timeout in seconds', default=3600)
+    parser.add_argument('--mapper-mb', metavar='MB', type=int, help='mapper memory in Yarn', default=2048)
+    parser.add_argument('--mapper-mb-heap', metavar='MB', type=int, help='mapper memory in JVM', default=1792)
+    parser.add_argument('--reducer-mb', metavar='MB', type=int, help='reducer memory in Yarn', default=3072)
+    parser.add_argument('--reducer-mb-heap', metavar='MB', type=int, help='reducer memory in JVM', default=2816)
+    parser.add_argument('-f', '--force', action='store_true', help='if set, will overwrite old output')
+    parser.add_argument('-v', '--verbose', action='count', help='log verbosity', default=0)
+
+    args = parser.parse_args()
+
+    logging.basicConfig(format='%(asctime)s %(levelname)s:%(name)s -- %(message)s')
+    levels = [logging.WARN, logging.INFO, logging.DEBUG]
+    logger.setLevel(levels[min(len(levels)-1, args.verbose)])
+
+    run(args.input, args.output, args.name_node, args.jar, args.job_class, args.timeout * 1000, args.mapper_mb,
+        args.mapper_mb_heap, args.reducer_mb, args.reducer_mb_heap, args.reducers, args.force)
 
 
-def run(input_path, output_path, name_node, jar, class_, timeout, mapper_mb, 
+def run(input_path, output_path, name_node, jar, job_class, timeout, mapper_mb,
         mapper_mb_heap, reducer_mb, reducer_mb_heap, reducers, force):
     
     hdfs_client = hdfs.Client(name_node)
     
     if done(hdfs_client, output_path) and not force:
-        raise RuntimeError("Already completed.")
+        raise RuntimeError('already completed.')
     
-    dump2revdocs(input_path, output_path, jar, class_, timeout, mapper_mb, 
+    dump2revdocs(input_path, output_path, jar, job_class, timeout, mapper_mb,
                  mapper_mb_heap, reducer_mb, reducer_mb_heap, reducers)
     
     if not done(hdfs_client, output_path):
-        raise RuntimeError("Something went wrong.")
-    
+        raise RuntimeError('something went wrong')
+
 
 def done(hdfs_client, output_path):
-    logger.debug("Checking for output at {0}.".format(output_path))
+    logger.debug('checking for output at {}'.format(output_path))
     try: 
-        hdfs_client.content(os.path.join(output_path, "_SUCCESS"))
+        hdfs_client.content(os.path.join(output_path, '_SUCCESS'))
         return True
     except hdfs.HdfsError:
         return False
-        
-def dump2revdocs(input_path, output_path, jar, class_, timeout, mapper_mb, mapper_mb_heap, 
+
+
+def dump2revdocs(input_path, output_path, jar, job_class, timeout, mapper_mb, mapper_mb_heap,
                  reducer_mb, reducer_mb_heap, reducers):
-    logger.debug("Starting hadoop job.")
-    subprocess.call(["hadoop", "jar", jar, class_,
-                     "--task-timeout {0}".format(timeout),
-                     "--mapper-mb {0}".format(mapper_mb),
-                     "--mapper-mb-heap {0}".format(mapper_mb_heap),
-                     "--reducer-mb {0}".format(reducer_mb),
-                     "--reducer-mb-heap {0}".format(reducer_mb_heap),
-                     "-r", str(reducers),
-                     "-i", input_path,
-                     "-o", output_path]),
-                    stderr=sys.stderr, 
+    logger.debug('starting hadoop job')
+    subprocess.call(['hadoop', 'jar', jar, job_class,
+                     '--task-timeout', timeout,
+                     '--mapper-mb', mapper_mb,
+                     '--mapper-mb-heap', mapper_mb_heap,
+                     '--reducer-mb', reducer_mb,
+                     '--reducer-mb-heap', reducer_mb_heap,
+                     '-r', reducers,
+                     '-i', input_path,
+                     '-o', output_path],
+                    stderr=sys.stderr,
                     stdout=sys.stdout)
     
     
-if __name__ == "__main__": main()
+if __name__ == '__main__':
+    main()
