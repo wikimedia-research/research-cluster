@@ -16,7 +16,7 @@ Options:
     -j --jar=<path>      Set the mapreduce job jar path
                          [default: /wmf/jars/wikihadoop-0.2.jar]
     -c --class=<name>    Set the mapreduce job class
-                         [default: org.wikimedia.wikihadoop.job.JsonRevisionsSortedPerPageMapReduce]
+                         [default: org.wikimedia.wikihadoop.job.JsonRevisionsSortedPerPage]
     -r --reducers=<num>  Set mapreduce job number of reducers
                          (defines the maximum number of output files) 
                          [default: 2000]
@@ -54,12 +54,12 @@ def main():
     
     jar = args['--jar']
     class_ = args['--class']
-    reducers = args['--reducers']
-    timeout = args['--timeout'] * 1000
-    mapper_mb = args['--mapper-mb']
-    mapper_mb_heap = args['--mapper-mb-heap']
-    reducer_mb = args['--reducer-mb']
-    reducer_mb_heap = args['--reducer-mb-heap']
+    reducers = int(args['--reducers'])
+    timeout = int(float(args['--timeout']) * 1000)
+    mapper_mb = float(args['--mapper-mb'])
+    mapper_mb_heap = float(args['--mapper-mb-heap'])
+    reducer_mb = float(args['--reducer-mb'])
+    reducer_mb_heap = float(args['--reducer-mb-heap'])
     
     force = args['--force']
     
@@ -94,14 +94,14 @@ def dump2revdocs(input_path, output_path, jar, class_, timeout, mapper_mb, mappe
                  reducer_mb, reducer_mb_heap, reducers):
     logger.debug("Starting hadoop job.")
     subprocess.call(["hadoop", "jar", jar, class_,
-                     "--task-timeout", timeout,
-                     "--mapper-mb", mapper_mb,
-                     "--mapper-mb-heap", mapper_mb_heap,
-                     "--reducer-mb", reducer_mb,
-                     "--reducer-mb-heap", reducer_mb_heap,
-                     "-r", reducers,
+                     "--task-timeout {0}".format(timeout),
+                     "--mapper-mb {0}".format(mapper_mb),
+                     "--mapper-mb-heap {0}".format(mapper_mb_heap),
+                     "--reducer-mb {0}".format(reducer_mb),
+                     "--reducer-mb-heap {0}".format(reducer_mb_heap),
+                     "-r", str(reducers),
                      "-i", input_path,
-                     "-o", output_path],
+                     "-o", output_path]),
                     stderr=sys.stderr, 
                     stdout=sys.stdout)
     
