@@ -62,7 +62,7 @@ def done(hdfs_client, output_path):
 def dump2revdocs(input_path, output_path, jar, job_class, timeout, mapper_mb, mapper_mb_heap,
                  reducer_mb, reducer_mb_heap, reducers):
     logger.debug('starting hadoop job')
-    subprocess.call(['hadoop', 'jar', jar, job_class,
+    subprocess.call([str(x) for x in ['/opt/hadoop/bin/hadoop', 'jar', jar, job_class,
                      '--task-timeout', timeout,
                      '--mapper-mb', mapper_mb,
                      '--mapper-mb-heap', mapper_mb_heap,
@@ -70,7 +70,7 @@ def dump2revdocs(input_path, output_path, jar, job_class, timeout, mapper_mb, ma
                      '--reducer-mb-heap', reducer_mb_heap,
                      '-r', reducers,
                      '-i', input_path,
-                     '-o', output_path],
+                     '-o', output_path]],
                     stderr=sys.stderr,
                     stdout=sys.stdout)
     
