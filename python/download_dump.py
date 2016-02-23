@@ -19,7 +19,7 @@ Options:
     -p --base-path=<path>   The base path where to store the files
                             [default: /wikimedia_data]
     -n --num-threads=<num>  Number of parallel downloading threads
-                            [default: 4]
+                            [default: 2]
     -r --num-retries=<num>  Number of retries in case of download failure
                             [default: 3]
     -b --buffer=<bytes>     Number of bytes for the download buffer
@@ -74,7 +74,8 @@ def main():
 def run(wikidb, day, name_node, base_path, num_threads, num_retries,
         buffer_size, force):
 
-    hdfs_client = hdfs.Client(name_node)
+    # Force insecure client usage for correct hdfs user setup
+    hdfs_client = hdfs.client.InsecureClient(name_node)
     output_path = os.path.join(base_path, '{0}-{1}'.format(wikidb, day),
                                'xmlbz2')
 
@@ -88,7 +89,7 @@ def run(wikidb, day, name_node, base_path, num_threads, num_retries,
                                DUMP_BZ2_FILE_PATTERN.format(wikidb, day))
 
     logger.info("Instantiating {0} workers ".format(num_threads) +
-                 "to download {0} files.".format(len(filenames)))
+                "to download {0} files.".format(len(filenames)))
 
     q = Queue.Queue()
     errs = []
@@ -189,7 +190,7 @@ def download_to_hdfs(hdfs_client, file_url, hdfs_file_path,
     while (num_tries < num_retries):
         logger.debug("Downloading from {0} ".format(file_url) +
                      "and uploading to {0} ".format(hdfs_file_path) +
-                     "(try {0})".format(num_tries))
+                     "(try {0})".format(num_tries + 1))
         try:
             hdfs_client.write(hdfs_file_path,
                               data=req.iter_content(buffer_size),
