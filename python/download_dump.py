@@ -12,20 +12,20 @@ Usage:
              [--force] [--debug]
 
 Options:
-    <wikidb>               The wiki to download (wikidb format, like enwiki)
-    <day>                  The day to check (yyyyMMdd format)
-    --name-node=<host>     The host of the cluster name-node
-                           [default: http://nn-ia.s3s.altiscale.com:50070]
-    -p --base-path=<path>  The base path where to store the files
-                           [default: /wikimedia_data]
-    -n --num-threads=<num> Number of parallel dowloading threads
-                           [default: 4]
-    -r --num-retries=<num> Number of retries in case of download failure
-                           [default: 3]
-    -b --buffer=<bytes>    Number of bytes for the download buffer
-                           [default: 4096]
-    -f --force             If set, will delete existing content if any
-    -d --debug             Print debug logging
+    <wikidb>                The wiki to download (wikidb format, like enwiki)
+    <day>                   The day to check (yyyyMMdd format)
+    --name-node=<host>      The host of the cluster name-node
+                            [default: http://nn-ia.s3s.altiscale.com:50070]
+    -p --base-path=<path>   The base path where to store the files
+                            [default: /wikimedia_data]
+    -n --num-threads=<num>  Number of parallel downloading threads
+                            [default: 4]
+    -r --num-retries=<num>  Number of retries in case of download failure
+                            [default: 3]
+    -b --buffer=<bytes>     Number of bytes for the download buffer
+                            [default: 4096]
+    -f --force              If set, will delete existing content if any
+    -d --debug              Print debug logging
 """
 import logging
 import os.path
@@ -40,9 +40,7 @@ import re
 import Queue
 import threading
 
-
 logger = logging.getLogger(__name__)
-
 
 BASE_DUMP_URI_PATTERN = 'http://dumps.wikimedia.org/{0}/{1}'
 DUMP_STATUS_URI_PATTERN = BASE_DUMP_URI_PATTERN + '/status.html'
@@ -81,7 +79,6 @@ def run(wikidb, day, name_node, base_path, num_threads, num_retries,
                                'xmlbz2')
 
     if not prepare_hdfs(hdfs_client, output_path, force):
-        logger.info
         raise RuntimeError("Problem preparing hdfs")
 
     if not dump_completed(DUMP_STATUS_URI_PATTERN.format(wikidb, day)):
@@ -90,7 +87,7 @@ def run(wikidb, day, name_node, base_path, num_threads, num_retries,
     filenames = dump_filenames(DUMP_SHA1_URI_PATTERN.format(wikidb, day),
                                DUMP_BZ2_FILE_PATTERN.format(wikidb, day))
 
-    logger.debug("Instantiating {0} workers ".format(num_threads) +
+    logger.info("Instantiating {0} workers ".format(num_threads) +
                  "to download {0} files.".format(len(filenames)))
 
     q = Queue.Queue()
