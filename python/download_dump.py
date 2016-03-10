@@ -84,7 +84,7 @@ def run(wikidb, day, name_node, base_path, user, num_threads, num_retries,
         buffer_size, timeout, force):
 
     # Force insecure client usage for correct hdfs user setup
-    hdfs_client = hdfs.client.InsecureClient(name_node)
+    hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
     output_path = os.path.join(base_path, '{0}-{1}'.format(wikidb, day),
                                'xmlbz2')
 
