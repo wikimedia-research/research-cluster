@@ -7,9 +7,12 @@ WARNING: Problems with hdfs write rights.
          Successfully tested on globally writable folders (hdfs:///tmp)
 
 Usage:
-    download_dump <wikidb> <day> [--name-node=<host>] [--base-path=<path>]
-             [--num-threads=<num>] [--num-retries=<num>] [--buffer=<bytes>]
+    download_dump <wikidb> <day>
+             [--name-node=<host>] [--base-path=<path>] [--user=<user>]
+             [--num-threads=<num>] [--num-retries=<num>]
+             [--buffer=<bytes>] [--timeout=<num>]
              [--force] [--debug]
+
 
 Options:
     <wikidb>                The wiki to download (wikidb format, like enwiki)
@@ -18,12 +21,16 @@ Options:
                             [default: http://nn-ia.s3s.altiscale.com:50070]
     -p --base-path=<path>   The base path where to store the files
                             [default: /wikimedia_data]
+    -u --user=<user>        Hadoop user to impersonate
+                            (defaults to user running the script)
     -n --num-threads=<num>  Number of parallel downloading threads
-                            [default: 4]
+                            [default: 2]
     -r --num-retries=<num>  Number of retries in case of download failure
                             [default: 3]
     -b --buffer=<bytes>     Number of bytes for the download buffer
                             [default: 4096]
+    -t --timeout=<num>      Number of seconds before timeout while downloading
+                            [default: 120]
     -f --force              If set, will delete existing content if any
     -d --debug              Print debug logging
 """
@@ -62,19 +69,22 @@ def main():
 
     name_node = args['--name-node']
     base_path = args['--base-path']
+    user = args['--user']
     num_threads = int(args['--num-threads'])
     num_retries = int(args['--num-retries'])
     buffer_size = int(args['--buffer'])
+    timeout = int(args['--timeout'])
     force = args['--force']
 
-    run(wikidb, day, name_node, base_path, num_threads, num_retries,
-        buffer_size, force)
+    run(wikidb, day, name_node, base_path, user, num_threads, num_retries,
+        buffer_size, timeout, force)
 
 
-def run(wikidb, day, name_node, base_path, num_threads, num_retries,
-        buffer_size, force):
+def run(wikidb, day, name_node, base_path, user, num_threads, num_retries,
+        buffer_size, timeout, force):
 
-    hdfs_client = hdfs.Client(name_node)
+    # Force insecure client usage for correct hdfs user setup
+    hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
     output_path = os.path.join(base_path, '{0}-{1}'.format(wikidb, day),
                                'xmlbz2')
 
@@ -87,7 +97,7 @@ def run(wikidb, day, name_node, base_path, num_threads, num_retries,
     filenames = dump_filenames(DUMP_SHA1_URI_PATTERN.format(wikidb, day),
                                DUMP_BZ2_FILE_PATTERN.format(wikidb, day))
 
-    logger.info("Instantiating {0} workers ".format(num_threads) +
+    logger.debug("Instantiating {0} workers ".format(num_threads) +
                  "to download {0} files.".format(len(filenames)))
 
     q = Queue.Queue()
@@ -99,8 +109,8 @@ def run(wikidb, day, name_node, base_path, num_threads, num_retries,
         q.put((file_url, hdfs_file_path, ))
 
     threads = [threading.Thread(target=worker,
-                                args=[q, errs, name_node, buffer_size,
-                                      num_retries])
+                                args=[q, errs, name_node, user, num_retries,
+                                      buffer_size, timeout])
                for _i in range(num_threads)]
 
     for thread in threads:
@@ -161,9 +171,12 @@ def dump_filenames(url, bz2_pattern):
     return filenames
 
 
-def worker(q, errs, name_node, buffer_size, num_retries):
+def worker(q, errs, name_node, user, num_retries, buffer_size, timeout):
     thread_name = threading.current_thread().name
-    hdfs_client = hdfs.Client(name_node)
+    if user:
+        hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
+    else:
+        hdfs_client = hdfs.client.InsecureClient(name_node)
     logger.debug("Starting worker {0}".format(thread_name))
     while True:
         (file_url, hdfs_file_path) = q.get()
@@ -173,7 +186,7 @@ def worker(q, errs, name_node, buffer_size, num_retries):
                 thread_name))
             return
         if (not download_to_hdfs(hdfs_client, file_url, hdfs_file_path,
-                                 buffer_size, num_retries)):
+                                 buffer_size, num_retries, timeout)):
             errs.append(file_url)
             logger.warn("Unsuccessful task for worker {0}".format(
                 thread_name))
@@ -183,24 +196,23 @@ def worker(q, errs, name_node, buffer_size, num_retries):
 
 
 def download_to_hdfs(hdfs_client, file_url, hdfs_file_path,
-                     buffer_size, num_retries):
-    req = requests.get(file_url, stream=True)
-    num_tries = 0
-    while (num_tries < num_retries):
-        logger.debug("Downloading from {0} ".format(file_url) +
-                     "and uploading to {0} ".format(hdfs_file_path) +
-                     "(try {0})".format(num_tries))
-        try:
-            hdfs_client.write(hdfs_file_path,
-                              data=req.iter_content(buffer_size),
-                              buffersize=buffer_size,
-                              overwrite=True)
-            return True
-        except:
-            num_tries += 1
-    logger.debug("Failed to download file {0} ".format(file_url) +
-                 "after {0} tries".format(num_retries))
-    return False
+                     buffer_size, num_retries, timeout):
+    session = requests.Session()
+    session.mount("http://",
+                  requests.adapters.HTTPAdapter(max_retries=num_retries))
+    req = session.get(file_url, stream=True, timeout=timeout)
+    logger.debug("Downloading from {0} ".format(file_url) +
+                 "and uploading to {0} ".format(hdfs_file_path))
+    try:
+        hdfs_client.write(hdfs_file_path,
+                          data=req.iter_content(buffer_size),
+                          buffersize=buffer_size,
+                          overwrite=True)
+        return True
+    except Exception as e:
+        logger.debug("Error while downloading {0}: {1}".format(file_url,
+                                                               str(e)))
+        return False
 
 
 if __name__ == "__main__":
