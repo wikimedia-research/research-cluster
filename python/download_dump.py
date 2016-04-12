@@ -1,38 +1,30 @@
 """
+Usage:
+    download_dump [options] <wikidb> <day> <hdfs-path>
+
 Checks if a completed MediaWiki XML dump is available,
 and if so download it and stream it to HDFS.
-Files will be stored in folder: <base-path/<wikidb>-<day>/xmlbz2
 
-WARNING: Problems with hdfs write rights.
-         Successfully tested on globally writable folders (hdfs:///tmp)
-
-Usage:
-    download_dump <wikidb> <day>
-             [--name-node=<host>] [--base-path=<path>] [--user=<user>]
-             [--num-threads=<num>] [--num-retries=<num>]
-             [--buffer=<bytes>] [--timeout=<num>]
-             [--force] [--debug]
-
+Arguments:
+    <wikidb>                 The wiki to download, wikidb format, like enwiki
+    <day>                    The day to check, yyyyMMdd format
+    <hdfs-path>              The hdfs path where to store the downloaded files
 
 Options:
-    <wikidb>                The wiki to download (wikidb format, like enwiki)
-    <day>                   The day to check (yyyyMMdd format)
-    --name-node=<host>      The host of the cluster name-node
-                            [default: http://nn-ia.s3s.altiscale.com:50070]
-    -p --base-path=<path>   The base path where to store the files
-                            [default: /wikimedia_data]
-    -u --user=<user>        Hadoop user to impersonate
-                            (defaults to user running the script)
-    -n --num-threads=<num>  Number of parallel downloading threads
-                            [default: 2]
-    -r --num-retries=<num>  Number of retries in case of download failure
-                            [default: 3]
-    -b --buffer=<bytes>     Number of bytes for the download buffer
-                            [default: 4096]
-    -t --timeout=<num>      Number of seconds before timeout while downloading
-                            [default: 120]
-    -f --force              If set, will delete existing content if any
-    -d --debug              Print debug logging
+    --name-node=<host>       The host of the cluster name-node
+                               [default: http://nn-ia.s3s.altiscale.com:50070]
+    --user=<user>            Hdfs user to impersonate
+                              (defaults to user running the script)
+    --download-threads=<n>   Number of parallel downloading threads
+                              [default: 2]
+    --download-retries=<n>   Number of retries in case of download failure
+                              [default: 3]
+    --download-buffer=<b>    Number of bytes for the download buffer
+                              [default: 4096]
+    --download-timeout=<t>   Number of seconds before timeout while downloading
+                               [default: 120]
+    -f --force               If set, will delete existing content if any
+    -d --debug               Print debug logging
 """
 import logging
 import os.path
@@ -47,49 +39,73 @@ import re
 import Queue
 import threading
 
+from hdfs_downloader import HDFSDownloader
+
+
 logger = logging.getLogger(__name__)
 
-BASE_DUMP_URI_PATTERN = 'http://dumps.wikimedia.org/{0}/{1}'
-DUMP_STATUS_URI_PATTERN = BASE_DUMP_URI_PATTERN + '/status.html'
-DUMP_SHA1_URI_PATTERN = BASE_DUMP_URI_PATTERN + '/{0}-{1}-sha1sums.txt'
-DUMP_BZ2_FILE_PATTERN = '{0}-{1}-pages-meta-history.*\.xml.*\.bz2'
-DOWNLOAD_FILE_PATTERN = BASE_DUMP_URI_PATTERN + '/{2}'
+
+BASE_DUMP_URI_PATTERN = "https://dumps.wikimedia.org/{0}/{1}"
+DUMP_STATUS_URI_PATTERN = BASE_DUMP_URI_PATTERN + "/status.html"
+DUMP_SHA1_URI_PATTERN = BASE_DUMP_URI_PATTERN + "/{0}-{1}-sha1sums.txt"
+DUMP_BZ2_FILE_PATTERN = "{0}-{1}-pages-meta-history.*\.xml.*\.bz2"
+DOWNLOAD_FILE_PATTERN = BASE_DUMP_URI_PATTERN + "/{2}"
 
 
-def main():
-    args = docopt.docopt(__doc__)
-
+def main(args):
     logging.basicConfig(
-        format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
+        format="%(asctime)s %(levelname)s:%(name)s -- %(message)s"
     )
-    logger.setLevel(logging.DEBUG if args['--debug'] else logging.INFO)
+    logger.setLevel(logging.DEBUG if args["--debug"] else logging.INFO)
 
-    wikidb = args['<wikidb>']
-    day = args['<day>']
+    wikidb = args["<wikidb>"]
+    day = args["<day>"]
+    hdfs_path = args["<hdfs-path>"]
 
-    name_node = args['--name-node']
-    base_path = args['--base-path']
-    user = args['--user']
-    num_threads = int(args['--num-threads'])
-    num_retries = int(args['--num-retries'])
-    buffer_size = int(args['--buffer'])
-    timeout = int(args['--timeout'])
-    force = args['--force']
+    name_node = args["--name-node"]
+    user = args["--user"]
+    num_threads = int(args["--download-threads"])
+    num_retries = int(args["--download-retries"])
+    buffer_size = int(args["--download-buffer"])
+    timeout = int(args["--download-timeout"])
 
-    run(wikidb, day, name_node, base_path, user, num_threads, num_retries,
+    force = args["--force"]
+
+    logger.debug("Checking day format and values")
+    if not check_day_format(day):
+        raise RuntimeError("Wrong day format, expected yyyMMdd " +
+                           "with valid values.")
+
+    run(wikidb, day, name_node, hdfs_path, user, num_threads, num_retries,
         buffer_size, timeout, force)
 
 
-def run(wikidb, day, name_node, base_path, user, num_threads, num_retries,
+def check_day_format(day):
+    p = re.compile("(\d{4})(\d\d)(\d\d)")
+    match = p.search(day)
+    if match:
+        year = int(match.group(1))
+        month = int(match.group(2))
+        day = int(match.group(3))
+        if (year > 2010
+           and month > 0 and month < 13
+           and day > 0 and day < 32
+           and not (month == 2 and day > 29)
+           and not (month in [4, 6, 9, 11] and day > 30)):
+            return True
+    return False
+
+
+def run(wikidb, day, name_node, hdfs_path, user, num_threads, num_retries,
         buffer_size, timeout, force):
 
-    # Force insecure client usage for correct hdfs user setup
     hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
-    output_path = os.path.join(base_path, '{0}-{1}'.format(wikidb, day),
-                               'xmlbz2')
-
-    if not prepare_hdfs(hdfs_client, output_path, force):
+    if not prepare_hdfs(hdfs_client, hdfs_path, force):
         raise RuntimeError("Problem preparing hdfs")
+
+    hdfs_downloader = HDFSDownloader(name_node, user, num_threads, num_retries,
+                                     buffer_size, timeout, force)
+    hdfs_downloader.set_logging_level(logger.level)
 
     if not dump_completed(DUMP_STATUS_URI_PATTERN.format(wikidb, day)):
         raise RuntimeError("Dump not ready to be downloaded from MediaWiki")
@@ -97,45 +113,27 @@ def run(wikidb, day, name_node, base_path, user, num_threads, num_retries,
     filenames = dump_filenames(DUMP_SHA1_URI_PATTERN.format(wikidb, day),
                                DUMP_BZ2_FILE_PATTERN.format(wikidb, day))
 
-    logger.debug("Instantiating {0} workers ".format(num_threads) +
-                 "to download {0} files.".format(len(filenames)))
-
-    q = Queue.Queue()
-    errs = []
-
     for filename in filenames:
-        file_url = DOWNLOAD_FILE_PATTERN.format(wikidb, day, filename)
-        hdfs_file_path = os.path.join(output_path, filename)
-        q.put((file_url, hdfs_file_path, ))
+        url = DOWNLOAD_FILE_PATTERN.format(wikidb, day, filename)
+        path = os.path.join(hdfs_path, filename)
+        hdfs_downloader.enqueue(url, path)
 
-    threads = [threading.Thread(target=worker,
-                                args=[q, errs, name_node, user, num_retries,
-                                      buffer_size, timeout])
-               for _i in range(num_threads)]
+    hdfs_downloader.download()
 
-    for thread in threads:
-        thread.start()
-        q.put((None, None))  # one EOF marker for each thread
-
-    q.join()
-
-    if errs:
-        raise RuntimeError("Failed to download some file(s):\n\t{0}".format(
-            '\n\t'.join(errs)))
+    logger.debug("Done !")
 
 
-def prepare_hdfs(hdfs_client, output_path, force):
-    logger.debug("Preparing hdfs for path {0}".format(output_path))
-    bz2_files_pattern = os.path.join(output_path, "*.bz2")
-
-    if hdfs_client.content(output_path, strict=False):
+def prepare_hdfs(hdfs_client, hdfs_path, force):
+    """
+    Using hdfs_client, check if hdfs_path exists on hdfs.
+    If so, if force, delete existing folder and recreate it.
+    """
+    if hdfs_client.content(hdfs_path, strict=False):
         # Output path already exists
         if force:
             try:
-                logger.debug("Deleting and recreating directory {0}".format(
-                    output_path))
-                hdfs_client.delete(output_path, recursive=True)
-                hdfs_client.makedirs(output_path)
+                hdfs_client.delete(hdfs_path, recursive=True)
+                hdfs_client.makedirs(hdfs_path)
                 return True
             except hdfs.HdfsError as e:
                 logger.error(e)
@@ -144,8 +142,7 @@ def prepare_hdfs(hdfs_client, output_path, force):
             return False
     else:
         try:
-            logger.debug("Creating directory {0}".format(output_path))
-            hdfs_client.makedirs(output_path)
+            hdfs_client.makedirs(hdfs_path)
             return True
         except hdfs.HdfsError as e:
             logger.error(e)
@@ -171,52 +168,9 @@ def dump_filenames(url, bz2_pattern):
     return filenames
 
 
-def worker(q, errs, name_node, user, num_retries, buffer_size, timeout):
-    thread_name = threading.current_thread().name
-    if user:
-        hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
-    else:
-        hdfs_client = hdfs.client.InsecureClient(name_node)
-    logger.debug("Starting worker {0}".format(thread_name))
-    while True:
-        (file_url, hdfs_file_path) = q.get()
-        if file_url is None:  # EOF?
-            q.task_done()
-            logger.debug("Received EOF, stopping worker {0}".format(
-                thread_name))
-            return
-        if (not download_to_hdfs(hdfs_client, file_url, hdfs_file_path,
-                                 buffer_size, num_retries, timeout)):
-            errs.append(file_url)
-            logger.warn("Unsuccessful task for worker {0}".format(
-                thread_name))
-        else:
-            logger.debug("Successful task for worker {0}".format(thread_name))
-        q.task_done()
-
-
-def download_to_hdfs(hdfs_client, file_url, hdfs_file_path,
-                     buffer_size, num_retries, timeout):
-    session = requests.Session()
-    session.mount("http://",
-                  requests.adapters.HTTPAdapter(max_retries=num_retries))
-    req = session.get(file_url, stream=True, timeout=timeout)
-    logger.debug("Downloading from {0} ".format(file_url) +
-                 "and uploading to {0} ".format(hdfs_file_path))
-    try:
-        hdfs_client.write(hdfs_file_path,
-                          data=req.iter_content(buffer_size),
-                          buffersize=buffer_size,
-                          overwrite=True)
-        return True
-    except Exception as e:
-        logger.debug("Error while downloading {0}: {1}".format(file_url,
-                                                               str(e)))
-        return False
-
-
 if __name__ == "__main__":
     try:
-        main()
+        main(docopt.docopt(__doc__))
     except RuntimeError as e:
         logger.error(e)
+        sys.exit(1)

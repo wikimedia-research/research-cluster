@@ -2,16 +2,19 @@
 -- If the table already exists, drop it first.
 --
 -- Parameters:
---     <revdocs-table>    The fully qualified name of
---                        the revdocs table to create
---     <data-path>        The path to the table data folder
+--     <hcatalog_path>       The path where to find hive-hcatalog-core jar
+--                             on your cluster (needed for handling json)
+--     <revdocs_table>       The fully qualified name of the revdocs table
+--                             to create
+--     <data_path>           The path to the table data folder
 --
 -- Usage
 --     hive -f create_revdocs_table.hql   \
+--          -d hcatalog_path=/opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar \
 --          -d revdocs_table=wmf_dumps.enwiki_20150923_fulltext  \
 --          -d data_path=/wmf/dumps/full-json-sorted/enwiki-20150923
 
-ADD JAR /opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar;
+ADD JAR ${hcatalog_path};
 
 DROP TABLE IF EXISTS ${revdocs_table};
 
