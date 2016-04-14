@@ -30,8 +30,9 @@ Options:
 
     --download-threads=<n>   Number of parallel downloading threads
                               [default: 2]
-    --download-retries=<n>   Number of retries in case of download failure
-                              [default: 3]
+    --download-tries=<n>     Number of tries in case of download failure
+                              (0 for eternal retries)
+                              [default: 0]
     --download-buffer=<b>    Number of bytes for the download buffer
                               [default: 4096]
     --download-timeout=<t>   Number of seconds before timeout while downloading
