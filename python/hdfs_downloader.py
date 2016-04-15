@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 class HDFSDownloader(object):
 
+    # Reusable constants
+    SHA1_CHECK = "sha1"
+    MD5_CHECK = "md5"
+    SIZE_CHECK = "size"
+
     def __init__(self,
                  name_node,
                  user,
@@ -26,12 +31,8 @@ class HDFSDownloader(object):
                  num_threads,
                  num_tries,
                  buffer_size,
-                 timeout):
-
-        # Reusable constants
-        self.SHA1_CHECK = "sha1"
-        self.MD5_CHECK = "md5"
-        self.SIZE_CHECK = "size"
+                 timeout,
+                 debug):
 
         self.name_node = name_node
         self.user = user
@@ -40,13 +41,20 @@ class HDFSDownloader(object):
         self.num_tries = num_tries
         self.buffer_size = buffer_size
         self.timeout = timeout
+        self.debug = debug
+
         self._q = Queue.Queue()
         self._errs = []
         self._threads = [threading.Thread(target=self._worker)
                          for _i in range(self.num_threads)]
 
-    def set_logging_level(self, level):
-        logger.setLevel(level)
+        self._init_logging()
+
+    def _init_logging(self):
+        logging.basicConfig(
+            format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
+        )
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
 
     def enqueue(self, url, path, check_val):
         """

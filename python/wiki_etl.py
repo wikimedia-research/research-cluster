@@ -39,7 +39,7 @@ Options:
 
     --download-dump=<d>      Dump type to download, can be 'history' for
                               historical edits or 'current' for current version
-                              [defult: history]
+                              [default: history]
     --download-no-check      It set, doesn't check md5 of existing or newly
                                downloaded files, assume correctness
     --download-flag=<f>      Name of an empty file created in <hdfs-path> when
@@ -151,10 +151,11 @@ class WikiDumpEtl(object):
                  hive_server,
                  hive_port,
                  hive_database,
-                 hive_hcatalog
+                 hive_hcatalog,
                  hive_metadata_reducers,
                  hive_metadata_compression,
-                 force):
+                 force,
+                 debug):
 
         self.no_download = no_download
         self.no_xmljson = no_xmljson
@@ -190,13 +191,16 @@ class WikiDumpEtl(object):
         self.hive_metadata_reducers = hive_metadata_reducers
         self.hive_metadata_compression = hive_metadata_compression
         self.force = force
+        self.debug = debug
 
         self.xml_path = self._wiki_path(FOLDER_XMLBZ2)
-        self.json_path = self.wiki_path(FOLDER_JSONBZ2)
-        self.meta_path = self.wiki_path(FOLDER_METADATA)
+        self.json_path = self._wiki_path(FOLDER_JSONBZ2)
+        self.meta_path = self._wiki_path(FOLDER_METADATA)
 
         self.metadata_table = "{0}_{1}".format(self.wikidb, self.day)
         self.fulltext_table = "{0}_fulltext".format(self.metadata_table)
+
+        self._init_logging()
 
     def _wiki_path(self, postfix):
         return os.path.join(self.base_path,
@@ -209,6 +213,12 @@ class WikiDumpEtl(object):
 
     def _hive_param(self, param, value):
         return "=".join([p.strip(), v.strip()])
+
+    def _init_logging(self):
+        logging.basicConfig(
+            format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
+        )
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
 
     def _download(self):
         logger.debug("Launching dump download")
@@ -224,7 +234,8 @@ class WikiDumpEtl(object):
                                     self.download_num_tries,
                                     self.download_buffer_size,
                                     self.download_timeout,
-                                    self.force)
+                                    self.force,
+                                    self.debug)
         downloader.run()
 
     def _xmljson(self):
@@ -241,7 +252,8 @@ class WikiDumpEtl(object):
                                      self.xmljson_mapper_mb_heap,
                                      self.xmljson_reducer_mb,
                                      self.xmljson_reducer_mb_heap,
-                                     self.force)
+                                     self.force,
+                                     self.debug)
         converter.run()
 
     def _hive_create_fulltext_table(self):
@@ -257,7 +269,8 @@ class WikiDumpEtl(object):
                                self.hive_server,
                                self.hive_port,
                                self.user,
-                               self.hive_database)
+                               self.hive_database,
+                               self.debug)
         hql_runner.run()
 
     def _hive_create_metadata_table(self):
@@ -272,7 +285,8 @@ class WikiDumpEtl(object):
                                self.hive_server,
                                self.hive_port,
                                self.user,
-                               self.hive_database)
+                               self.hive_database,
+                               self.debug)
         hql_runner.run()
 
     def _hive_load_metadata_table(self):
@@ -291,7 +305,8 @@ class WikiDumpEtl(object):
                                self.hive_server,
                                self.hive_port,
                                self.user,
-                               self.hive_database)
+                               self.hive_database,
+                               self.debug)
         hql_runner.run()
 
     def run(self):
@@ -312,11 +327,6 @@ class WikiDumpEtl(object):
 
 
 def main(args):
-    logging.basicConfig(
-        format="%(asctime)s %(levelname)s:%(name)s -- %(message)s"
-    )
-    logger.setLevel(logging.DEBUG if args["--debug"] else logging.INFO)
-
     wikidb = args["<wikidb>"]
     day = args["<day>"]
 
@@ -347,10 +357,11 @@ def main(args):
     hive_server = args["--hive-server"]
     hive_port = args["--hive-port"]
     hive_database = args["--hive-database"]
-    hive_hcatalo = args["--hive-hcatalog"]
+    hive_hcatalog = args["--hive-hcatalog"]
     hive_metadata_reducers = args["--hive-metadata-red"]
     hive_metadata_compression = args["--hive-metadata-cpr"]
     force = args["--force"]
+    debug = args["--debug"]
 
     etl = WikiDumpEtl(no_download,
                       no_xmljson,
@@ -381,10 +392,11 @@ def main(args):
                       hive_server,
                       hive_port,
                       hive_database,
-                      hive_hcatalog
+                      hive_hcatalog,
                       hive_metadata_reducers,
                       hive_metadata_compression,
-                      force)
+                      force,
+                      debug)
     etl.run()
 
 

@@ -70,7 +70,8 @@ class XMLJSONConverter(object):
                  mapper_mb_heap,
                  reducer_mb,
                  reducer_mb_heap,
-                 force):
+                 force,
+                 debug):
 
         self.input_path = input_path
         self.output_path = output_path
@@ -85,6 +86,15 @@ class XMLJSONConverter(object):
         self.reducer_mb = str(int(reducer_mb))
         self.reducer_mb_heap = str(int(reducer_mb_heap))
         self.force = force
+        self.debug = debug
+
+        self._init_logging()
+
+    def _init_logging(self):
+        logging.basicConfig(
+            format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
+        )
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
 
     def run(self):
         self._configure_hdfs_client()
@@ -170,6 +180,7 @@ def main(args):
     reducer_mb = args["--xmljson-red-mb"]
     reducer_mb_heap = args["--xmljson-red-mb-hp"]
     force = args["--force"]
+    debug = args["--debug"]
 
     converter = XMLJSONConverter(input_path,
                                  output_path,
@@ -183,7 +194,8 @@ def main(args):
                                  mapper_mb_heap,
                                  reducer_mb,
                                  reducer_mb_heap,
-                                 force)
+                                 force,
+                                 debug)
 
     converter.run()
 

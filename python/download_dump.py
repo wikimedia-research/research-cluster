@@ -92,7 +92,8 @@ class DumpDownloader(object):
                  num_tries,
                  buffer_size,
                  timeout,
-                 force):
+                 force,
+                 debug):
         self.wikidb = wikidb
         self.day = day
         self.hdfs_path = hdfs_path
@@ -106,13 +107,21 @@ class DumpDownloader(object):
         self.buffer_size = buffer_size
         self.timeout = timeout
         self.force = force
+        self.debug = debug
 
+        self._init_logging()
         self._check_day_format()
         self._init_md5_url_pattern()
 
     #
     # Init Funtions
     #
+    def _init_logging(self):
+        logging.basicConfig(
+            format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
+        )
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
+
     def _check_day_format(self):
         logger.debug("Checking day parameter format and values")
         p = re.compile("(\d{4})(\d\d)(\d\d)")
@@ -263,7 +272,8 @@ class DumpDownloader(object):
                                          self.num_threads,
                                          self.num_tries,
                                          self.buffer_size,
-                                         self.timeout)
+                                         self.timeout,
+                                         self.debug)
         hdfs_downloader.set_logging_level(logger.level)
 
         files_to_download = [f for f in self.statuses
@@ -303,11 +313,6 @@ class DumpDownloader(object):
 
 
 def main(args):
-    logging.basicConfig(
-        format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
-    )
-    logger.setLevel(logging.DEBUG if args['--debug'] else logging.INFO)
-
     wikidb = args["<wikidb>"]
     day = args["<day>"]
     hdfs_path = args["<hdfs-path>"]
@@ -322,6 +327,7 @@ def main(args):
     buffer_size = int(args["--download-buffer"])
     timeout = int(args["--download-timeout"])
     force = args["--force"]
+    debug = args["--debug"]
 
     dl = DumpDownloader(
         wikidb,
@@ -336,7 +342,8 @@ def main(args):
         num_tries,
         buffer_size,
         timeout,
-        force)
+        force,
+        debug)
     dl.run()
 
 

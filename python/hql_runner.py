@@ -40,7 +40,8 @@ class HQLRunner(object):
                  server,
                  port,
                  user,
-                 database):
+                 database,
+                 debug):
 
         self.hql_path = hql_path
         self.params = params
@@ -48,13 +49,21 @@ class HQLRunner(object):
         self.port = port
         self.user = user
         self.database = database
+        self.debug = debug
 
+        self._init_logging()
         self._check_hql_script()
         self._init_and_check_hql_params()
 
     #
     # Init Functions
     #
+    def _init_logging(self):
+        logging.basicConfig(
+            format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
+        )
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
+
     def _check_hql_script(self):
         logger.debug("Checking hql script is a file")
         if not os.path.isfile(self.hql_path):
@@ -92,8 +101,8 @@ class HQLRunner(object):
         logger.debug("Preparing hql script")
         comment_pattern = re.compile("--.*\n")
 
-        uncommented_hql = with open(self.hql_path, "r") as hql_file:
-            comment_pattern.sub("", hql_file.read())
+        with open(self.hql_path, "r") as hql_file:
+            uncommented_hql = comment_pattern.sub("", hql_file.read())
 
         parameterized_hql = uncommented_hql
         for param, value in hql_params.iteritems():
@@ -128,7 +137,7 @@ def main(args):
     user = args["--user"]
     database = args["--hive-database"]
 
-    hql_runner = HQLRunner(hql_path
+    hql_runner = HQLRunner(hql_path,
                            params,
                            server,
                            port,
