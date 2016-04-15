@@ -16,6 +16,11 @@ Options:
                                [default: http://nn-ia.s3s.altiscale.com:50070]
     --user=<user>            Hdfs user to impersonate
                               (defaults to user running the script)
+    --download-no-check      It set, doesn't check md5 of existing or newly
+                               downloaded files, assume correctness
+    --download-flag=<f>      Name of an empty file created in <hdfs-path> when
+                              download is succesfull and checked
+                              [default: _SUCCESS]
     --download-threads=<n>   Number of parallel downloading threads
                               [default: 2]
     --download-tries=<n>     Number of tries in case of download failure
@@ -68,6 +73,8 @@ def main(args):
 
     name_node = args["--name-node"]
     user = args["--user"]
+    flag = args["--download-flag"]
+    no_check = args["--download-no-check"]
     num_threads = int(args["--download-threads"])
     num_tries = int(args["--download-tries"])
     buffer_size = int(args["--download-buffer"])
@@ -80,8 +87,8 @@ def main(args):
         raise RuntimeError("Wrong day format, expected yyyMMdd " +
                            "with valid values.")
 
-    run(wikidb, day, name_node, hdfs_path, user, num_threads, num_tries,
-        buffer_size, timeout, force)
+    run(wikidb, day, name_node, hdfs_path, user, flag, no_check, num_threads,
+        num_tries, buffer_size, timeout, force)
 
 
 def check_day_format(day):
@@ -100,8 +107,8 @@ def check_day_format(day):
     return False
 
 
-def run(wikidb, day, name_node, hdfs_path, user, num_threads, num_tries,
-        buffer_size, timeout, force):
+def run(wikidb, day, name_node, hdfs_path, user, flag, no_check, num_threads,
+        num_tries, buffer_size, timeout, force):
 
     hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
 
@@ -110,7 +117,8 @@ def run(wikidb, day, name_node, hdfs_path, user, num_threads, num_tries,
 
     files_info = dump_files_infos(DUMP_MD5_URI_PATTERN.format(wikidb, day),
                                   DUMP_BZ2_FILE_PATTERN.format(wikidb, day))
-    to_download_files_info = prepare(hdfs_client, hdfs_path, files_info, force)
+    to_download_files_info = prepare(hdfs_client, hdfs_path, files_info,
+                                     no_check, force)
 
     hdfs_downloader = HDFSDownloader(name_node, user, num_threads, num_tries,
                                      buffer_size, timeout, force)
@@ -119,7 +127,10 @@ def run(wikidb, day, name_node, hdfs_path, user, num_threads, num_tries,
     for (filename, md5sum) in to_download_files_info:
         url = DOWNLOAD_FILE_PATTERN.format(wikidb, day, filename)
         path = os.path.join(hdfs_path, filename)
-        hdfs_downloader.enqueue(url, path, md5sum)
+        if no_check:
+            hdfs_downloader.enqueue(url, path, None, None)
+        else:
+            hdfs_downloader.enqueue(url, path, "md5", md5sum)
 
     hdfs_downloader.start()
     hdfs_downloader.wait()
@@ -128,7 +139,7 @@ def run(wikidb, day, name_node, hdfs_path, user, num_threads, num_tries,
         raise RuntimeError("Errors downloading some files:\n\t{0}".format(
             "\n\t".join(e[0] for e in hdfs_downloader.tasks_with_errors())))
 
-    write_checked_flag(hdfs_client, hdfs_path)
+    write_flag(hdfs_client, hdfs_path, flag)
 
     logger.debug("Done !")
 
@@ -152,7 +163,7 @@ def dump_files_infos(url, pattern):
     return files_info
 
 
-def prepare(hdfs_client, hdfs_path, files_info, force):
+def prepare(hdfs_client, hdfs_path, files_info, no_check, force):
     """
     If hdfs_path exists on hdfs:
       - if force, delete folder and recreate it, return unchanged work list.
@@ -176,7 +187,8 @@ def prepare(hdfs_client, hdfs_path, files_info, force):
         else:
             logger.debug("Checking existing files in folder before download")
             try:
-                return merge_files_info(hdfs_client, hdfs_path, files_info)
+                return merge_files_info(hdfs_client, hdfs_path, files_info,
+                                        no_check)
             except hdfs.HdfsError as e:
                 logger.error(e)
                 raise RuntimeError("Problem preparing for download [merge].")
@@ -190,7 +202,7 @@ def prepare(hdfs_client, hdfs_path, files_info, force):
             raise RuntimeError("Problem preparing for download [new].")
 
 
-def merge_files_info(hdfs_client, hdfs_path, files_info):
+def merge_files_info(hdfs_client, hdfs_path, files_info, no_check):
     files_info_dic = dict(files_info)
     for filename in hdfs_client.list(hdfs_path):
         file_path = os.path.join(hdfs_path, filename)
@@ -198,8 +210,8 @@ def merge_files_info(hdfs_client, hdfs_path, files_info):
             logger.debug("Deleting file not in dump from folder {0}".format(
                 file_path))
             hdfs_client.delete(file_path, recursive=True)
-        elif not check_hdfs_md5(hdfs_client, file_path,
-                                files_info_dic[filename]):
+        elif not (no_check and check_hdfs_md5(hdfs_client, file_path,
+                                              files_info_dic[filename])):
             logger.debug("Deleting incorrect file from folder {0}".format(
                 file_path))
             hdfs_client.delete(file_path, recursive=True)
@@ -207,7 +219,7 @@ def merge_files_info(hdfs_client, hdfs_path, files_info):
             logger.debug("Correct file existing in folder, removing from " +
                          "download list ({0})".format(filename))
             del files_info_dic[filename]
-    return files_info_dic.items
+    return files_info_dic.items()
 
 
 def check_hdfs_md5(hdfs_client, file_path, md5sum):
@@ -219,13 +231,14 @@ def check_hdfs_md5(hdfs_client, file_path, md5sum):
     return (md5.hexdigest() == md5sum)
 
 
-def write_checked_flag(hdfs_client, hdfs_path):
+def write_flag(hdfs_client, hdfs_path, flag):
     try:
-        hdfs_client.makedirs(hdfs_path)
-        return files_info
+        with hdfs_client.write(os.path.join(hdfs_path, flag)) as writer:
+            pass
     except hdfs.HdfsError as e:
         logger.error(e)
-        raise RuntimeError("Problem preparing for download [new].")
+        raise RuntimeError("Problem writing flag {0} in folder {1}".format(
+            flag, hdfs_path))
 
 
 if __name__ == "__main__":

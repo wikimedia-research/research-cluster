@@ -18,6 +18,15 @@ Arguments:
     <day>                    The day to check dump for, yyyyMMdd format
 
 Options:
+    --no-download            If set, doesn't try to download dump, go straight
+                              to xmljson extraction
+    --no-xmljson             If  set, doesn't try to extract json from xml, go
+                              straight to hive tables creation
+    --no-fulltext-table      If set, doesn't create hive fulltext table
+    --no-metadata-table      If set, doesn't create hive metadata table
+    --no-metadata-load       If set, doesn't laod hive metadata table
+                               from fulltext one
+
     --base-path=<path>       Base path where to store the files
                                [default: /wikimedia_data]
 
@@ -28,6 +37,11 @@ Options:
     --queue=<queue>          Hadoop queue in which to run the job
                                [default: research]
 
+    --download-no-check      It set, doesn't check md5 of existing or newly
+                               downloaded files, assume correctness
+    --download-flag=<f>      Name of an empty file created in <hdfs-path> when
+                              download is succesfull and checked
+                              [default: _SUCCESS]
     --download-threads=<n>   Number of parallel downloading threads
                               [default: 2]
     --download-tries=<n>     Number of tries in case of download failure
@@ -128,48 +142,53 @@ def main(args):
     wiki_json = wiki_path(FOLDER_JSONBZ2)
     wiki_meta = wiki_path(FOLDER_METADATA)
 
-    logger.debug("Launching download_dump")
-    download_dump_args = copy.copy(args)
-    download_dump_args["<hdfs-path>"] = wiki_xml
-    download_dump.main(download_dump_args)
+    if not args["--no-download"]:
+        logger.debug("Launching download_dump")
+        download_dump_args = copy.copy(args)
+        download_dump_args["<hdfs-path>"] = wiki_xml
+        download_dump.main(download_dump_args)
 
-    logger.debug("Launching dump2revdocs")
-    dump2revdocs_args = copy.copy(args)
-    dump2revdocs_args["<input>"] = wiki_xml
-    dump2revdocs_args["<output>"] = wiki_json
-    dump2revdocs.main(dump2revdocs_args)
+    if not args["--no-xmljson"]:
+        logger.debug("Launching dump2revdocs")
+        dump2revdocs_args = copy.copy(args)
+        dump2revdocs_args["<input>"] = wiki_xml
+        dump2revdocs_args["<output>"] = wiki_json
+        dump2revdocs.main(dump2revdocs_args)
 
-    logger.debug("Launch hql_runner.main for fulltext table creation")
-    hql_fulltext_table_args = copy.copy(args)
-    hql_fulltext_table_args["<hql>"] = hive_path(HQL_SCRIPT_FULLTEXT_TABLE)
-    hql_fulltext_table_args["<param>"] = [
-        param_val(HQL_PARAM_HCATALOG_PATH, hive_hcatalog),
-        param_val(HQL_PARAM_FULLTEXT_TABLE, fulltext_table),
-        param_val(HQL_PARAM_DATA_PATH, wiki_json)
-    ]
-    hql_runner.main(hql_fulltext_table_args)
+    if not args["--no-fulltext-table"]:
+        logger.debug("Launch hql_runner.main for fulltext table creation")
+        hql_fulltext_table_args = copy.copy(args)
+        hql_fulltext_table_args["<hql>"] = hive_path(HQL_SCRIPT_FULLTEXT_TABLE)
+        hql_fulltext_table_args["<param>"] = [
+            param_val(HQL_PARAM_HCATALOG_PATH, hive_hcatalog),
+            param_val(HQL_PARAM_FULLTEXT_TABLE, fulltext_table),
+            param_val(HQL_PARAM_DATA_PATH, wiki_json)
+        ]
+        hql_runner.main(hql_fulltext_table_args)
 
-    logger.debug("Launch hql_runner.main for metadata table creation")
-    hql_metadata_table_args = copy.copy(args)
-    hql_metadata_table_args["<hql>"] = hive_path(HQL_SCRIPT_METADATA_TABLE)
-    hql_metadata_table_args["<param>"] = [
-        param_val(HQL_PARAM_METADATA_TABLE, metadata_table),
-        param_val(HQL_PARAM_DATA_PATH, wiki_meta)
-    ]
-    hql_runner.main(hql_metadata_table_args)
+    if not args["--no-metadata-table"]:
+        logger.debug("Launch hql_runner.main for metadata table creation")
+        hql_metadata_table_args = copy.copy(args)
+        hql_metadata_table_args["<hql>"] = hive_path(HQL_SCRIPT_METADATA_TABLE)
+        hql_metadata_table_args["<param>"] = [
+            param_val(HQL_PARAM_METADATA_TABLE, metadata_table),
+            param_val(HQL_PARAM_DATA_PATH, wiki_meta)
+        ]
+        hql_runner.main(hql_metadata_table_args)
 
-    logger.debug("Launch hql_runner.main for metadata table load")
-    hql_metadata_load_args = copy.copy(args)
-    hql_metadata_load_args["<hql>"] = hive_path(HQL_SCRIPT_METADATA_LOAD)
-    hql_metadata_load_args["<param>"] = [
-        param_val(HQL_PARAM_HCATALOG_PATH, hive_hcatalog),
-        param_val(HQL_PARAM_QUEUE, queue),
-        param_val(HQL_PARAM_REDUCERS, metadata_reducers),
-        param_val(HQL_PARAM_COMPRESSION, metadata_compression),
-        param_val(HQL_PARAM_METADATA_TABLE, metadata_table),
-        param_val(HQL_PARAM_FULLTEXT_TABLE, fulltext_table)
-    ]
-    hql_runner.main(hql_metadata_load_args)
+    if not args["--no-metadata-load"]:
+        logger.debug("Launch hql_runner.main for metadata table load")
+        hql_metadata_load_args = copy.copy(args)
+        hql_metadata_load_args["<hql>"] = hive_path(HQL_SCRIPT_METADATA_LOAD)
+        hql_metadata_load_args["<param>"] = [
+            param_val(HQL_PARAM_HCATALOG_PATH, hive_hcatalog),
+            param_val(HQL_PARAM_QUEUE, queue),
+            param_val(HQL_PARAM_REDUCERS, metadata_reducers),
+            param_val(HQL_PARAM_COMPRESSION, metadata_compression),
+            param_val(HQL_PARAM_METADATA_TABLE, metadata_table),
+            param_val(HQL_PARAM_FULLTEXT_TABLE, fulltext_table)
+        ]
+        hql_runner.main(hql_metadata_load_args)
 
 
 if __name__ == "__main__":
