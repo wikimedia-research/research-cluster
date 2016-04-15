@@ -23,7 +23,7 @@ Options:
                                (defines the maximum number of output files)
                                [default: 2000]
     --xmljson-timeout=<s>    XML to JSON mapreduce task timeout in seconds
-                               [default: 3600]
+                               [default: 36000]
     --xmljson-map-mb=<n>     Mapper memory in Yarn  (MB)  [default: 2048]
     --xmljson-map-mb-hp=<n>  Mapper memory in JVM   (MB)  [default: 1792]
     --xmljson-red-mb=<n>     Reducer memory in Yarn (MB)  [default: 4096]

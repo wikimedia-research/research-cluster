@@ -37,7 +37,7 @@ Options:
     --queue=<queue>          Hadoop queue in which to run the job
                                [default: research]
 
-    --download-dump=<d>      Dump type to download, can be 'history' for
+    --download-type=<d>      Dump type to download, can be 'history' for
                               historical edits or 'current' for current version
                               [default: history]
     --download-no-check      It set, doesn't check md5 of existing or newly
@@ -45,6 +45,8 @@ Options:
     --download-flag=<f>      Name of an empty file created in <hdfs-path> when
                               download is succesfull and checked
                               [default: _SUCCESS]
+    --download-checkers=<n>  Number of parallel checking processes
+                              [default: 4]
     --download-threads=<n>   Number of parallel downloading threads
                               [default: 2]
     --download-tries=<n>     Number of tries in case of download failure
@@ -63,7 +65,7 @@ Options:
                                (defines the maximum number of output files)
                                [default: 2000]
     --xmljson-timeout=<s>    XML to JSON mapreduce task timeout in seconds
-                               [default: 3600]
+                               [default: 36000]
     --xmljson-map-mb=<n>     Mapper memory in Yarn  (MB)  [default: 2048]
     --xmljson-map-mb-hp=<n>  Mapper memory in JVM   (MB)  [default: 1792]
     --xmljson-red-mb=<n>     Reducer memory in Yarn (MB)  [default: 4096]
@@ -136,7 +138,8 @@ class WikiDumpEtl(object):
                  download_dump_type,
                  download_success_flag,
                  download_no_check,
-                 download_num_threads,
+                 download_num_checkers,
+                 download_num_downloaders,
                  download_num_tries,
                  download_buffer_size,
                  download_timeout,
@@ -172,7 +175,8 @@ class WikiDumpEtl(object):
         self.download_dump_type = download_dump_type
         self.download_success_flag = download_success_flag
         self.download_no_check = download_no_check
-        self.download_num_threads = download_num_threads
+        self.download_num_checkers = download_num_checkers
+        self.download_num_downloaders = download_num_downloaders
         self.download_num_tries = download_num_tries
         self.download_buffer_size = download_buffer_size
         self.download_timeout = download_timeout
@@ -230,7 +234,8 @@ class WikiDumpEtl(object):
                                     self.download_dump_type,
                                     self.download_success_flag,
                                     self.download_no_check,
-                                    self.download_num_threads,
+                                    self.download_num_checkers,
+                                    self.download_num_downloaders,
                                     self.download_num_tries,
                                     self.download_buffer_size,
                                     self.download_timeout,
@@ -297,7 +302,8 @@ class WikiDumpEtl(object):
             self._hive_param(HQL_PARAM_HCATALOG_PATH, self.hive_hcatalog),
             self._hive_param(HQL_PARAM_QUEUE, self.queue),
             self._hive_param(HQL_PARAM_REDUCERS, self.hive_metadata_reducers),
-            self._hive_param(HQL_PARAM_COMPRESSION, self.hive_metadata_compression),
+            self._hive_param(HQL_PARAM_COMPRESSION,
+                             self.hive_metadata_compression),
             self._hive_param(HQL_PARAM_METADATA_TABLE, self.metadata_table),
             self._hive_param(HQL_PARAM_FULLTEXT_TABLE, self.fulltext_table)
         ]
@@ -340,10 +346,11 @@ def main(args):
     name_node = args["--name-node"]
     user = args["--user"]
     queue = args["--queue"]
-    download_dump_type = args["--download-dump"]
+    download_dump_type = args["--download-type"]
     download_success_flag = args["--download-flag"]
     download_no_check = args["--download-no-check"]
-    download_num_threads = args["--download-threads"]
+    download_num_checkers = args["--download-checkers"]
+    download_num_downloaders = args["--download-threads"]
     download_num_tries = args["--download-tries"]
     download_buffer_size = args["--download-buffer"]
     download_timeout = args["--download-timeout"]
@@ -378,7 +385,8 @@ def main(args):
                       download_dump_type,
                       download_success_flag,
                       download_no_check,
-                      download_num_threads,
+                      download_num_checkers,
+                      download_num_downloaders,
                       download_num_tries,
                       download_buffer_size,
                       download_timeout,

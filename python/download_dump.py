@@ -16,7 +16,7 @@ Options:
                                [default: http://nn-ia.s3s.altiscale.com:50070]
     --user=<user>            Hdfs user to impersonate
                               (defaults to user running the script)
-    --download-dump=<d>      Dump type to download, can be 'history' for
+    --download-type=<d>      Dump type to download, can be 'history' for
                               historical edits or 'current' for current version
                               [default: history]
     --download-no-check      It set, doesn't check md5 of existing or newly
@@ -24,6 +24,8 @@ Options:
     --download-flag=<f>      Name of an empty file created in <hdfs-path> when
                               download is succesfull and checked
                               [default: _SUCCESS]
+    --download-checkers=<n>  Number of parallel checking processes
+                              [default: 4]
     --download-threads=<n>   Number of parallel downloading threads
                               [default: 2]
     --download-tries=<n>     Number of tries in case of download failure
@@ -44,18 +46,18 @@ import sys
 import docopt
 import hdfs
 import requests
-from requests.packages.urllib3.exceptions import InsecurePlatformWarning
+# from requests.packages.urllib3.exceptions import InsecurePlatformWarning
 
 import hashlib
 import re
 
+import multiprocessing
 import Queue
-import threading
 
 from hdfs_downloader import HDFSDownloader
 
 
-requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
+# requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -69,12 +71,13 @@ DUMP_CURRENT_BZ2_FILE_PATTERN = (
     "(\w{{32}})  ({0}-{1}-pages-articles.*\.xml.*\.bz2)")
 DOWNLOAD_FILE_PATTERN = BASE_DUMP_URI_PATTERN + "/{2}"
 
-DUMP_TYPE_HISTORY = "history"
-DUMP_TYPE_CURRENT = "current"
+HISTORY_TYPE = "history"
+CURRENT_TYPE = "current"
 
 FILE_PRESENT = 0
 FILE_ABSENT = 1
 FILE_CORRUPT = 2
+FILE_ERROR = 3
 
 
 class DumpDownloader(object):
@@ -88,7 +91,8 @@ class DumpDownloader(object):
                  dump_type,
                  success_flag,
                  no_check,
-                 num_threads,
+                 num_checkers,
+                 num_downloaders,
                  num_tries,
                  buffer_size,
                  timeout,
@@ -102,7 +106,8 @@ class DumpDownloader(object):
         self.dump_type = dump_type
         self.success_flag = success_flag
         self.no_check = no_check
-        self.num_threads = int(num_threads)
+        self.num_checkers = int(num_checkers)
+        self.num_downloaders = int(num_downloaders)
         self.num_tries = int(num_tries)
         self.buffer_size = int(buffer_size)
         self.timeout = int(timeout)
@@ -141,10 +146,10 @@ class DumpDownloader(object):
 
     def _init_md5_url_pattern(self):
         logger.debug("Checking dump type parameter")
-        if self.dump_type == DUMP_TYPE_HISTORY:
+        if self.dump_type == HISTORY_TYPE:
             self.md5_url_pattern = DUMP_HISTORY_BZ2_FILE_PATTERN.format(
                 self.wikidb, self.day)
-        elif self.dump_type == DUMP_TYPE_CURRENT:
+        elif self.dump_type == CURRENT_TYPE:
             self.md5_url_pattern = DUMP_CURRENT_BZ2_FILE_PATTERN.format(
                 self.wikidb, self.day)
         else:
@@ -216,20 +221,56 @@ class DumpDownloader(object):
         logger.debug("Checking status of existing files")
         if self.hdfs_client.content(self.hdfs_path, strict=False):
             present_files = self.hdfs_client.list(self.hdfs_path)
-        for filename in self.filenames:
-            fullpath = os.path.join(self.hdfs_path, filename)
-            if filename not in present_files:
-                logger.debug("{0} is absent".format(filename))
-                self.statuses[filename] = FILE_ABSENT
-            elif self._confirm_checksum(filename):
-                logger.debug("{0} is present".format(filename))
-                self.statuses[filename] = FILE_PRESENT
-            else:
-                logger.debug("{0} is corrupted".format(filename))
-                self.statuses[filename] = FILE_CORRUPT
 
-    def _confirm_checksum(self, filename):
-        logger.debug("confirming checksum for {0}".format(filename))
+        nb_files = len(self.filenames)
+        q_in = multiprocessing.Queue(nb_files)
+        for filename in self.filenames:
+            q_in.put(filename)
+        q_out = multiprocessing.Queue(nb_files)
+        checkers = [multiprocessing.Process(target=self._file_status_checker,
+                                            args=(present_files, q_in, q_out))
+                    for _ in range(self.num_checkers)]
+
+        for c in checkers:
+            # c.daemon = True
+            c.start()
+        [c.join() for c in checkers]
+        self.statuses = dict([q_out.get() for i in range(nb_files)])
+        if FILE_ERROR in self.statuses.values():
+            logger.error("An error happened while checking file, " +
+                         "stopping download process")
+            raise RuntimeError("File check error")
+
+    def _file_status_checker(self, present_files, q_in, q_out):
+        process_name = multiprocessing.current_process().name
+        while True:
+            try:
+                filename = q_in.get_nowait()
+            except Queue.Empty:
+                return
+            try:
+                fullpath = os.path.join(self.hdfs_path, filename)
+                if filename not in present_files:
+                    logger.debug("{0}: {1} is absent".format(
+                        process_name, filename))
+                    q_out.put((filename, FILE_ABSENT))
+                elif self.no_check or self._confirm_checksum(process_name,
+                                                             filename):
+                    logger.debug("{0}: {1} is present".format(
+                        process_name, filename))
+                    q_out.put((filename, FILE_PRESENT))
+                else:
+                    logger.debug("{0}: {1} is corrupted".format(
+                        process_name, filename))
+                    q_out.put((filename, FILE_CORRUPT))
+            except Exception:
+                logger.debug("{0}: {1} has raised an error".format(
+                    process_name, filename))
+                q_out.put((filename, FILE_ERROR))
+
+    def _confirm_checksum(self, process_name, filename):
+        logger.debug("{0}: confirming checksum for {1}".format(
+            process_name, filename))
         found = self._md5sum_for_file(filename)
         given = self.md5s[filename]
         return given == found
@@ -262,7 +303,8 @@ class DumpDownloader(object):
         hdfs_downloader = HDFSDownloader(self.name_node,
                                          self.user,
                                          HDFSDownloader.MD5_CHECK,
-                                         self.num_threads,
+                                         self.num_checkers,
+                                         self.num_downloaders,
                                          self.num_tries,
                                          self.buffer_size,
                                          self.timeout,
@@ -277,7 +319,7 @@ class DumpDownloader(object):
             hdfs_file_path = os.path.join(self.hdfs_path, filename)
             if self.no_check:
                 # No check value needed
-                hdfs_downloader.enqueue(url, path, None)
+                hdfs_downloader.enqueue(file_url, hdfs_file_path, None)
             else:
                 file_md5 = self.md5s[filename]
                 hdfs_downloader.enqueue(file_url, hdfs_file_path, file_md5)
@@ -309,12 +351,13 @@ def main(args):
     day = args["<day>"]
     hdfs_path = args["<hdfs-path>"]
 
-    dump_type = args["--download-dump"]
+    dump_type = args["--download-type"]
     name_node = args["--name-node"]
     user = args["--user"]
     success_flag = args["--download-flag"]
     no_check = args["--download-no-check"]
-    num_threads = args["--download-threads"]
+    num_checkers = args["--download-checkers"]
+    num_downloaders = args["--download-threads"]
     num_tries = args["--download-tries"]
     buffer_size = args["--download-buffer"]
     timeout = args["--download-timeout"]
@@ -330,7 +373,8 @@ def main(args):
         dump_type,
         success_flag,
         no_check,
-        num_threads,
+        num_checkers,
+        num_downloaders,
         num_tries,
         buffer_size,
         timeout,
