@@ -6,45 +6,61 @@ import os.path
 
 import hdfs
 import requests
+from requests.packages.urllib3.exceptions import InsecurePlatformWarning
 import hashlib
 
 import Queue
 import threading
 
 
+requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
+logger = logging.getLogger(__name__)
+
+
 class HDFSDownloader(object):
 
-    def __init__(self, name_node, user, num_threads, num_tries, buffer_size,
-                 timeout, force):
-        self.logger = logging.getLogger(__name__)
+    def __init__(self,
+                 name_node,
+                 user,
+                 check,
+                 num_threads,
+                 num_tries,
+                 buffer_size,
+                 timeout):
+
+        # Reusable constants
+        self.SHA1_CHECK = "sha1"
+        self.MD5_CHECK = "md5"
+        self.SIZE_CHECK = "size"
+
         self.name_node = name_node
         self.user = user
+        self.check = check
         self.num_threads = num_threads
         self.num_tries = num_tries
         self.buffer_size = buffer_size
         self.timeout = timeout
-        self.force = force
         self._q = Queue.Queue()
         self._errs = []
         self._threads = [threading.Thread(target=self._worker)
                          for _i in range(self.num_threads)]
 
     def set_logging_level(self, level):
-        self.logger.setLevel(level)
+        logger.setLevel(level)
 
-    def enqueue(self, url, path, check, check_val):
+    def enqueue(self, url, path, check_val):
         """
         Add dowload tasks to the downloader.
         """
-        self.logger.debug("Enqueuing new task (total: {0})".format(
+        logger.debug("Enqueuing new task (total: {0})".format(
             self._q.qsize() + 1))
-        self._q.put((url, path, check, check_val, 1))
+        self._q.put((url, path, check_val, 1))
 
     def start(self):
         """
         Starts the download threads
         """
-        self.logger.debug("Starting {0} workers".format(self.num_threads))
+        logger.debug("Starting {0} workers".format(self.num_threads))
         for thread in self._threads:
             thread.start()
 
@@ -56,7 +72,7 @@ class HDFSDownloader(object):
 
     def tasks_with_errors(self):
         """
-        Returns the list of tasks (url, path, check, check_val)
+        Returns the list of tasks (url, path, check_val)
         having encountered error at download or check
         """
         return self._errs
@@ -71,89 +87,100 @@ class HDFSDownloader(object):
         thread_name = threading.current_thread().name
         hdfs_client = hdfs.client.InsecureClient(self.name_node,
                                                  user=self.user)
-        self.logger.debug("Starting worker {0}".format(thread_name))
+        logger.debug("Starting worker {0}".format(thread_name))
+
         while True:
             try:
-                (url, path, check, check_val, tries) = self._q.get()
-                if not (self._download_to_hdfs(hdfs_client, url, path) and
-                        self._check(hdfs_client, path, check, check_val)):
-                    if (tries < self.num_tries or self.num_tries == 0):
-                        self.logger.warn("Failed task in worker {0},".format(
-                            thread_name) + " re-enqueuing (try {0})".format(
-                            tries + 1))
-                        self._q.put((url, path, check, check_val, tries + 1))
-                    else:
-                        self.logger.warn("Failed task in worker {0}, ".format(
-                            thread_name) + "max retried reach ({0}), ".format(
-                            self.num_tries) + " logging task as error " +
-                            "({0} tasks left)".format(self._q.qsize() + 1))
-                        self._errs.append((url, path, check, check_val))
-                else:
-                    self.logger.debug("Successful task for worker {0} ".format(
-                        thread_name) + "({0} tasks left)".format(
-                        self._q.qsize() + 1))
-                self._q.task_done()
+                (url, path, check_val, current_try) = self._q.get()
             except Queue.Empty:
-                self.logger.debug("No more tasks, stopping worker {0}".format(
+                logger.debug("No more tasks, stopping worker {0}".format(
                     thread_name))
                 return
 
-    def _download_to_hdfs(self, hdfs_client, url, path, check, check_val):
+            downloaded = self._download_to_hdfs(hdfs_client, url, path)
+            checked = downloaded and self._check(hdfs_client, path, check_val)
+
+            if not (downloaded and checked):
+
+                retry = current_try < self.num_tries or self.num_tries == 0
+
+                if retry:
+                    logger.warn("Failed task in worker {0},".format(
+                        thread_name) + " re-enqueuing (try {0})".format(
+                        tries + 1))
+
+                    self._q.put((url, path, check_val, tries + 1))
+                else:
+                    logger.warn("Failed task in worker {0}, ".format(
+                        thread_name) + "max retried reach ({0}), ".format(
+                        self.num_tries) + " logging task as error " +
+                        "({0} tasks left)".format(self._q.qsize() + 1))
+
+                    self._errs.append((url, path, check_val))
+
+            else:
+                logger.debug("Successful task for worker {0} ".format(
+                    thread_name) + "({0} tasks left)".format(
+                    self._q.qsize() + 1))
+
+            self._q.task_done()
+
+    def _download_to_hdfs(self, hdfs_client, url, path):
         session = requests.Session()
         session.mount("http://", requests.adapters.HTTPAdapter(max_retries=3))
         req = session.get(url, stream=True, timeout=self.timeout)
 
         # Dowload file  and stream it into hdfs
-        self.logger.debug("Downloading from {0} ".format(url) +
-                          "and uploading to {0} ".format(path))
+        logger.debug("Downloading from {0} and uploading to {1}".format(
+            url, path))
         try:
             hdfs_client.write(path, data=req.iter_content(self.buffer_size),
                               buffersize=self.buffer_size, overwrite=True)
             return True
         except Exception as e:
-            self.logger.debug("Error while downloading {0}: {1}".format(
+            logger.debug("Error while downloading {0}: {1}".format(
                 url, str(e)))
             return False
 
-    def _check(self, hdfs_client, url, path, check, check_val):
+    def _check(self, hdfs_client, path, check_val):
         # Checking checks settings
-        if not check:
-            self.logger.debug("No check given, not checking {0} ".format(path))
+        if not self.check:
+            logger.debug("No check given, not checking {0} ".format(path))
             return True
 
-        if check == "md5":
-            if not check_val:
-                self.logger.debug("Empty md5 check value for file {0}".format(
-                    path))
+        if not check_val:
+            logger.warn("Empty check value for file {0}".format(path))
             return False
 
-            self.logger.debug("Checking md5 validity for {0}".format(path))
-            try:
-                md5 = hashlib.md5()
-                with hdfs_client.read(path, chunk_size=4096) as reader:
-                    for chunk in reader:
-                        md5.update(chunk)
-                return (md5.hexdigest() == check)
-            except Exception as e:
-                self.logger.debug("Error while checking md5 for {0}".format(
-                    path) + ": {0}".format(str(e)))
-                return False
-
-        elif check == "size":
-            if not check_val:
-                self.logger.debug("Empty size check value for file {0}".format(
-                    path))
-            return False
-
-            self.logger.debug("Checking size validity for {0}".format(path))
-            try:
-                return hdfs_client.status(path, strict=True)["length"] == check
-            except Exception as e:
-                self.logger.debug("Error while checking size for {0}".format(
-                    path) + ": {0}".format(str(e)))
-                return False
-
+        if self.check == self.SHA1_CHECK:
+            hasher = hashlib.sha1()
+            return self._check_crypto(hdfs_client, path, check_val, hasher)
+        elif self.check == self.MD5_CHECK:
+            hasher = hashlib.md5()
+            return self._check_crypto(hdfs_client, path, check_val, hasher)
+        elif self.check == self.SIZE_CHECK:
+            return self._check_size(hdfs_client, path, check_val)
         else:
-            self.logger.debug("Wrong check method ({0}) for file {1} ".format(
-                check, path))
+            logger.warn("Wrong check method ({0})".format(check, path))
+            return False
+
+    def _check_crypto(self, hdfs_client, path, check_val, hasher):
+        logger.debug("Checking crypto validity for {0}".format(path))
+        try:
+            with hdfs_client.read(path, chunk_size=4096) as reader:
+                for chunk in reader:
+                    hasher.update(chunk)
+            return (hasher.hexdigest() == check_val)
+        except Exception as e:
+            logger.debug("Error while crypto checking {0}: {1}".format(
+                path, str(e)))
+            return False
+
+    def _check_size(self, hdfs_client, path, check_val):
+        logger.debug("Checking size validity for {0}".format(path))
+        try:
+            return hdfs_client.status(path, strict=True)["length"] == check_val
+        except Exception as e:
+            logger.debug("Error while size checking {0}: {1}".format(
+                path, str(e)))
             return False
