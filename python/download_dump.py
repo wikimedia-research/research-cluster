@@ -100,12 +100,12 @@ class DumpDownloader(object):
         self.name_node = name_node
         self.user = user
         self.dump_type = dump_type
-        self.succes_flag = success_flag
+        self.success_flag = success_flag
         self.no_check = no_check
-        self.num_threads = num_threads
-        self.num_tries = num_tries
-        self.buffer_size = buffer_size
-        self.timeout = timeout
+        self.num_threads = int(num_threads)
+        self.num_tries = int(num_tries)
+        self.buffer_size = int(buffer_size)
+        self.timeout = int(timeout)
         self.force = force
         self.debug = debug
 
@@ -158,8 +158,9 @@ class DumpDownloader(object):
         self._verify_dump_ready_for_download()
         self._configure_hdfs_client()
         self._identify_target_file_list_and_md5s()
-        self._check_status_of_existing_files()
         self._prepare_hdfs()
+        self._check_status_of_existing_files()
+        self._remove_corrupt_and_unexpected_files()
         self._download_dumps()
         self._write_success_flag()
 
@@ -191,6 +192,23 @@ class DumpDownloader(object):
                     self.md5s[filename] = md5
         else:
             raise RuntimeError("MD5 hash listing unavailable")
+
+    def _prepare_hdfs(self):
+        logger.debug("Preparing HDFS for download")
+        if self.hdfs_client.content(self.hdfs_path, strict=False):
+            if self.force:
+                try:
+                    self.hdfs_client.delete(self.hdfs_path, recursive=True)
+                    self.hdfs_client.makedirs(self.hdfs_path)
+                except hdfs.HdfsError as e:
+                    logger.error(e)
+                    raise RuntimeError("Problem preparing HDFS [force].")
+        else:
+            try:
+                self.hdfs_client.makedirs(self.hdfs_path)
+            except hdfs.HdfsError as e:
+                logger.error(e)
+                raise RuntimeError("Problem preparing for HDFS [new].")
 
     def _check_status_of_existing_files(self):
         self.statuses = {}
@@ -224,33 +242,8 @@ class DumpDownloader(object):
                 md5.update(chunk)
         return md5.hexdigest()
 
-    def _prepare_hdfs(self):
-        logger.debug("Preparing HDFS for download")
-        if self.hdfs_client.content(self.hdfs_path, strict=False):
-            if self.force:
-                try:
-                    self.hdfs_client.delete(self.hdfs_path, recursive=True)
-                    self.hdfs_client.makedirs(self.hdfs_path)
-                    for f in self.statuses:
-                        self.statuses[f] = FILE_ABSENT
-                except hdfs.HdfsError as e:
-                    logger.error(e)
-                    raise RuntimeError("Problem preparing HDFS [force].")
-            else:
-                logger.debug("Preparing existing files before download")
-                try:
-                    self._remove_corrupt_and_unexpected_files()
-                except hdfs.HdfsError as e:
-                    logger.error(e)
-                    raise RuntimeError("Problem preparing HDFS [merge].")
-        else:
-            try:
-                self.hdfs_client.makedirs(self.hdfs_path)
-            except hdfs.HdfsError as e:
-                logger.error(e)
-                raise RuntimeError("Problem preparing for HDFS [new].")
-
     def _remove_corrupt_and_unexpected_files(self):
+        logger.debug("Preparing existing files before download")
         present_files = self.hdfs_client.list(self.hdfs_path)
         for filename in present_files:
             file_path = os.path.join(self.hdfs_path, filename)
@@ -274,7 +267,6 @@ class DumpDownloader(object):
                                          self.buffer_size,
                                          self.timeout,
                                          self.debug)
-        hdfs_downloader.set_logging_level(logger.level)
 
         files_to_download = [f for f in self.statuses
                              if self.statuses[f] != FILE_PRESENT]
@@ -282,13 +274,13 @@ class DumpDownloader(object):
             file_url = DOWNLOAD_FILE_PATTERN.format(self.wikidb,
                                                     self.day,
                                                     filename)
-            hdfs_file_path = os.path.join(self.output_path, filename)
+            hdfs_file_path = os.path.join(self.hdfs_path, filename)
             if self.no_check:
                 # No check value needed
                 hdfs_downloader.enqueue(url, path, None)
             else:
                 file_md5 = self.md5s[filename]
-                hdfs_downloader.enqueue((file_url, hdfs_file_path, file_md5))
+                hdfs_downloader.enqueue(file_url, hdfs_file_path, file_md5)
 
         logger.debug("Starting to download")
         hdfs_downloader.start()
@@ -322,10 +314,10 @@ def main(args):
     user = args["--user"]
     success_flag = args["--download-flag"]
     no_check = args["--download-no-check"]
-    num_threads = int(args["--download-threads"])
-    num_tries = int(args["--download-tries"])
-    buffer_size = int(args["--download-buffer"])
-    timeout = int(args["--download-timeout"])
+    num_threads = args["--download-threads"]
+    num_tries = args["--download-tries"]
+    buffer_size = args["--download-buffer"]
+    timeout = args["--download-timeout"]
     force = args["--force"]
     debug = args["--debug"]
 

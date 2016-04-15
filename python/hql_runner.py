@@ -83,7 +83,7 @@ class HQLRunner(object):
             hql = hql_file.read()
             for m in param_pattern.finditer(hql):
                 param = m.group(1)
-                if param not in self.hql_params or not hql_params[param]:
+                if param not in self.hql_params or not self.hql_params[param]:
                     wrong_params[param] = True
 
         if wrong_params:
@@ -105,7 +105,7 @@ class HQLRunner(object):
             uncommented_hql = comment_pattern.sub("", hql_file.read())
 
         parameterized_hql = uncommented_hql
-        for param, value in hql_params.iteritems():
+        for param, value in self.hql_params.iteritems():
             parameterized_hql = parameterized_hql.replace(
                 "${{{0}}}".format(param), value)
 
@@ -113,10 +113,10 @@ class HQLRunner(object):
         self.hql_actions = filter(bool, hql_actions)
 
     def _execute_actions(self):
-        with dbapi.connect(host=server,
-                           port=port,
-                           user=user,
-                           database=database,
+        with dbapi.connect(host=self.server,
+                           port=self.port,
+                           user=self.user,
+                           database=self.database,
                            auth_mechanism="PLAIN") as conn:
             cursor = conn.cursor()
             for action in self.hql_actions:

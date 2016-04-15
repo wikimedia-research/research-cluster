@@ -209,10 +209,10 @@ class WikiDumpEtl(object):
 
     def _hive_path(self, script):
         # Ugly hack to access hive scripts
-        return os.path.join(os.path.dirname(os.path.abspath(__file__)), s)
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), script)
 
     def _hive_param(self, param, value):
-        return "=".join([p.strip(), v.strip()])
+        return "=".join([param.strip(), value.strip()])
 
     def _init_logging(self):
         logging.basicConfig(
@@ -243,6 +243,7 @@ class WikiDumpEtl(object):
         converter = XMLJSONConverter(self.xml_path,
                                      self.json_path,
                                      self.name_node,
+                                     self.user,
                                      self.queue,
                                      self.xmljson_jar,
                                      self.xmljson_class_,
@@ -293,12 +294,12 @@ class WikiDumpEtl(object):
         logger.debug("Launching HQLrunner loading metadata table")
         hql_path = self._hive_path(HQL_SCRIPT_METADATA_LOAD)
         hql_params = [
-            param_val(HQL_PARAM_HCATALOG_PATH, self.hive_hcatalog),
-            param_val(HQL_PARAM_QUEUE, self.queue),
-            param_val(HQL_PARAM_REDUCERS, self.hive_metadata_reducers),
-            param_val(HQL_PARAM_COMPRESSION, self.hive_metadata_compression),
-            param_val(HQL_PARAM_METADATA_TABLE, self.metadata_table),
-            param_val(HQL_PARAM_FULLTEXT_TABLE, self.fulltext_table)
+            self._hive_param(HQL_PARAM_HCATALOG_PATH, self.hive_hcatalog),
+            self._hive_param(HQL_PARAM_QUEUE, self.queue),
+            self._hive_param(HQL_PARAM_REDUCERS, self.hive_metadata_reducers),
+            self._hive_param(HQL_PARAM_COMPRESSION, self.hive_metadata_compression),
+            self._hive_param(HQL_PARAM_METADATA_TABLE, self.metadata_table),
+            self._hive_param(HQL_PARAM_FULLTEXT_TABLE, self.fulltext_table)
         ]
         hql_runner = HQLRunner(hql_path,
                                hql_params,

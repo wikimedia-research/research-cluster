@@ -99,7 +99,7 @@ class HDFSDownloader(object):
 
         while True:
             try:
-                (url, path, check_val, current_try) = self._q.get()
+                (url, path, check_val, current_try) = self._q.get_nowait()
             except Queue.Empty:
                 logger.debug("No more tasks, stopping worker {0}".format(
                     thread_name))

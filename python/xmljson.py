@@ -11,9 +11,10 @@ Arguments:
 Options:
     --name-node=<host>       The host of the cluster name-node
                                [default: http://nn-ia.s3s.altiscale.com:50070]
+    --user=<user>            Hdfs user to impersonate
+                              (defaults to user running the script)
     --queue=<queue>          The hadoop queue in which to run the job
                                [default: research]
-
     --xmljson-jar=<path>     XML to JSON mapreduce job jar path
                                [default: /wmf/jars/wikihadoop-0.2.jar]
     --xmljson-class=<name>   XML to JSON mapreduce job class
@@ -61,6 +62,7 @@ class XMLJSONConverter(object):
                  input_path,
                  output_path,
                  name_node,
+                 user,
                  queue,
                  jar,
                  class_,
@@ -76,6 +78,7 @@ class XMLJSONConverter(object):
         self.input_path = input_path
         self.output_path = output_path
         self.name_node = name_node
+        self.user = user
         self.queue = queue
         self.jar = jar
         self.class_ = class_
@@ -98,15 +101,15 @@ class XMLJSONConverter(object):
 
     def run(self):
         self._configure_hdfs_client()
-        self._prepare_hdfs()
-        try:
-            self._execute_hadoop_job()
-        except KeyboardInterrupt:
-            logger.error(ERROR_MSG)
-            raise RuntimeError("Job interrupted")
-        if not self._check_success_file():
-            raise RuntimeError("No success file after hadoop job, " +
-                               "something probably went wrong")
+        if self._prepare_hdfs():
+            try:
+                self._execute_hadoop_job()
+            except KeyboardInterrupt:
+                logger.error(ERROR_MSG)
+                raise RuntimeError("Job interrupted")
+            if not self._check_success_file():
+                raise RuntimeError("No success file after hadoop job, " +
+                                   "something probably went wrong")
 
     def _configure_hdfs_client(self):
         name_node = self.name_node
@@ -116,20 +119,23 @@ class XMLJSONConverter(object):
     def _prepare_hdfs(self):
         logger.debug("Preparing HDFS for xmljson")
         if self._check_success_file():
-            if self.force:
-                try:
-                    self.hdfs_client.delete(self.output_path, recursive=True)
-                    self.hdfs_client.makedirs(self.output_path)
-                except hdfs.HdfsError as e:
-                    logger.error(e)
-                    raise RuntimeError("Problem preparing HDFS [force].")
-            else:
-                raise RuntimeError("Already completed.")
+            if not self.force:
+                logger.info("Success file already existing in output path," +
+                            " not recomputing")
+                return False
+        try:
+            self.hdfs_client.delete(self.output_path, recursive=True)
+        except hdfs.HdfsError as e:
+            logger.error(e)
+            raise RuntimeError("Problem preparing HDFS.")
+        return True
 
     def _check_success_file(self):
-        logger.debug("Checking for success file in {0}.".format(output_path))
+        logger.debug("Checking for success file in {0}".format(
+            self.output_path))
         try:
-            self.hdfs_client.content(os.path.join(output_path, "_SUCCESS"))
+            self.hdfs_client.content(
+                os.path.join(self.output_path, "_SUCCESS"))
             return True
         except hdfs.HdfsError:
             return False
@@ -170,6 +176,7 @@ def main(args):
     output_path = args["<output>"]
 
     name_node = args["--name-node"]
+    user = args["--user"]
     queue = args["--queue"]
     jar = args["--xmljson-jar"]
     class_ = args["--xmljson-class"]
@@ -185,6 +192,7 @@ def main(args):
     converter = XMLJSONConverter(input_path,
                                  output_path,
                                  name_node,
+                                 user,
                                  queue,
                                  jar,
                                  class_,
