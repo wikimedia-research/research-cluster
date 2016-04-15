@@ -18,7 +18,7 @@ Options:
                               (defaults to user running the script)
     --download-dump=<d>      Dump type to download, can be 'history' for
                               historical edits or 'current' for current version
-                              [defult: history]
+                              [default: history]
     --download-no-check      It set, doesn't check md5 of existing or newly
                                downloaded files, assume correctness
     --download-flag=<f>      Name of an empty file created in <hdfs-path> when
@@ -107,17 +107,12 @@ class DumpDownloader(object):
         self.timeout = timeout
         self.force = force
 
-    def run(self):
         self._check_day_format()
-        self._verify_dump_ready_for_download()
-        self._configure_hdfs_client()
-        self._configure_md5_url_pattern()
-        self._identify_target_file_list_and_md5s()
-        self._check_status_of_existing_files()
-        self._prepare_hdfs()
-        self._download_dumps()
-        self._write_success_flag()
+        self._init_md5_url_pattern()
 
+    #
+    # Init Funtions
+    #
     def _check_day_format(self):
         logger.debug("Checking day parameter format and values")
         p = re.compile("(\d{4})(\d\d)(\d\d)")
@@ -135,6 +130,30 @@ class DumpDownloader(object):
         raise RuntimeError("Wrong day parameter, expected yyyMMdd " +
                            "with valid values.")
 
+    def _init_md5_url_pattern(self):
+        logger.debug("Checking dump type parameter")
+        if self.dump_type == DUMP_TYPE_HISTORY:
+            self.md5_url_pattern = DUMP_HISTORY_BZ2_FILE_PATTERN.format(
+                self.wikidb, self.day)
+        elif self.dump_type == DUMP_TYPE_CURRENT:
+            self.md5_url_pattern = DUMP_CURRENT_BZ2_FILE_PATTERN.format(
+                self.wikidb, self.day)
+        else:
+            raise RuntimeError("Wrong dump type provided: {0}".format(
+                self.dump_type))
+
+    #
+    # Run Funtions
+    #
+    def run(self):
+        self._verify_dump_ready_for_download()
+        self._configure_hdfs_client()
+        self._identify_target_file_list_and_md5s()
+        self._check_status_of_existing_files()
+        self._prepare_hdfs()
+        self._download_dumps()
+        self._write_success_flag()
+
     def _verify_dump_ready_for_download(self):
         url = DUMP_STATUS_URI_PATTERN.format(self.wikidb, self.day)
         logger.debug("Checking for dump completion at {0}".format(url))
@@ -146,17 +165,6 @@ class DumpDownloader(object):
         name_node = self.name_node
         user = self.user
         self.hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
-
-    def _configure_md5_url_pattern(self):
-        if self.dump_type == DUMP_TYPE_HISTORY:
-            self.md5_url_pattern = DUMP_HISTORY_BZ2_FILE_PATTERN.format(
-                self.wikidb, self.day)
-        elif self.dump_type == DUMP_TYPE_CURRENT:
-            self.md5_url_pattern = DUMP_CURRENT_BZ2_FILE_PATTERN.format(
-                self.wikidb, self.day)
-        else:
-            raise RuntimeError("Wrong dump type provided: {0}".format(
-                self.dump_type))
 
     def _identify_target_file_list_and_md5s(self):
         url = DUMP_MD5_URI_PATTERN.format(self.wikidb, self.day)
@@ -241,7 +249,7 @@ class DumpDownloader(object):
                 logger.debug("Deleting {0} because it doesn't belong".format(
                              filename))
                 self.hdfs_client.delete(file_path, recursive=True)
-            if (self.statuses[filename] == FILE_CORRUPT):
+            elif (self.statuses[filename] == FILE_CORRUPT):
                 logger.debug("Deleting {0} because it is corrupted".format(
                              filename))
                 self.hdfs_client.delete(file_path, recursive=True)
@@ -251,7 +259,7 @@ class DumpDownloader(object):
         logger.debug("Instantiating and initialising  HDFSDownloader")
         hdfs_downloader = HDFSDownloader(self.name_node,
                                          self.user,
-                                         HDFSDownloader.MD5_CHECK
+                                         HDFSDownloader.MD5_CHECK,
                                          self.num_threads,
                                          self.num_tries,
                                          self.buffer_size,
@@ -294,9 +302,7 @@ class DumpDownloader(object):
                 success_flag_path))
 
 
-def main():
-    args = docopt.docopt(__doc__)
-
+def main(args):
     logging.basicConfig(
         format='%(asctime)s %(levelname)s:%(name)s -- %(message)s'
     )
@@ -318,7 +324,6 @@ def main():
     force = args["--force"]
 
     dl = DumpDownloader(
-        self,
         wikidb,
         day,
         hdfs_path,

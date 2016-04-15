@@ -37,6 +37,9 @@ Options:
     --queue=<queue>          Hadoop queue in which to run the job
                                [default: research]
 
+    --download-dump=<d>      Dump type to download, can be 'history' for
+                              historical edits or 'current' for current version
+                              [defult: history]
     --download-no-check      It set, doesn't check md5 of existing or newly
                                downloaded files, assume correctness
     --download-flag=<f>      Name of an empty file created in <hdfs-path> when
@@ -74,12 +77,13 @@ Options:
                                [default: wmf_dumps]
     --hive-hcatalog=<path>   Path to the hive-hcatalog-core jar file
                                [default: /opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar]
-    --metadata-reducers=<n>  Number of reducers used to extract metadata from
+    --hive-metadata-red=<n>  Number of reducers used to extract metadata from
                                json data (defines the number of output files)
                                [default: 64]
-    --metadata-compress=<c>  Compression scheme to be used for metadata parquet
+    --hive-metadata-cpr=<c>  Compression scheme to be used for metadata parquet
                                table (can be SNAPPY or GZIP).
                                [default: SNAPPY]
+
     -f --force               If set, will delete existing content if any
     -d --debug               Print debug logging
 """
@@ -90,9 +94,9 @@ import copy
 
 import docopt
 
-import download_dump
-import dump2revdocs
-import hql_runner
+from download_dump import DumpDownloader
+from xmljson import XMLJSONConverter
+from hql_runner import HQLRunner
 
 
 logger = logging.getLogger(__name__)
@@ -115,80 +119,273 @@ HQL_PARAM_REDUCERS = "reducers"
 HQL_PARAM_COMPRESSION = "compression"
 
 
+class WikiDumpEtl(object):
+
+    def __init__(self,
+                 no_download,
+                 no_xmljson,
+                 no_fulltext_table,
+                 no_metadata_table,
+                 no_metadata_load,
+                 wikidb,
+                 day,
+                 base_path,
+                 name_node,
+                 user,
+                 queue,
+                 download_dump_type,
+                 download_success_flag,
+                 download_no_check,
+                 download_num_threads,
+                 download_num_tries,
+                 download_buffer_size,
+                 download_timeout,
+                 xmljson_jar,
+                 xmljson_class_,
+                 xmljson_reducers,
+                 xmljson_timeout,
+                 xmljson_mapper_mb,
+                 xmljson_mapper_mb_heap,
+                 xmljson_reducer_mb,
+                 xmljson_reducer_mb_heap,
+                 hive_server,
+                 hive_port,
+                 hive_database,
+                 hive_hcatalog
+                 hive_metadata_reducers,
+                 hive_metadata_compression,
+                 force):
+
+        self.no_download = no_download
+        self.no_xmljson = no_xmljson
+        self.no_fulltext_table = no_fulltext_table
+        self.no_metadata_table = no_metadata_table
+        self.no_metadata_load = no_metadata_load
+
+        self.wikidb = wikidb
+        self.day = day
+        self.base_path = base_path
+        self.name_node = name_node
+        self.user = user
+        self.queue = queue
+        self.download_dump_type = download_dump_type
+        self.download_success_flag = download_success_flag
+        self.download_no_check = download_no_check
+        self.download_num_threads = download_num_threads
+        self.download_num_tries = download_num_tries
+        self.download_buffer_size = download_buffer_size
+        self.download_timeout = download_timeout
+        self.xmljson_jar = xmljson_jar
+        self.xmljson_class_ = xmljson_class_
+        self.xmljson_reducers = xmljson_reducers
+        self.xmljson_timeout = xmljson_timeout
+        self.xmljson_mapper_mb = xmljson_mapper_mb
+        self.xmljson_mapper_mb_heap = xmljson_mapper_mb_heap
+        self.xmljson_reducer_mb = xmljson_reducer_mb
+        self.xmljson_reducer_mb_heap = xmljson_reducer_mb_heap
+        self.hive_server = hive_server
+        self.hive_port = hive_port
+        self.hive_database = hive_database
+        self.hive_hcatalog = hive_hcatalog
+        self.hive_metadata_reducers = hive_metadata_reducers
+        self.hive_metadata_compression = hive_metadata_compression
+        self.force = force
+
+        self.xml_path = self._wiki_path(FOLDER_XMLBZ2)
+        self.json_path = self.wiki_path(FOLDER_JSONBZ2)
+        self.meta_path = self.wiki_path(FOLDER_METADATA)
+
+        self.metadata_table = "{0}_{1}".format(self.wikidb, self.day)
+        self.fulltext_table = "{0}_fulltext".format(self.metadata_table)
+
+    def _wiki_path(self, postfix):
+        return os.path.join(self.base_path,
+                            "{0}-{1}".format(self.wikidb, self.day),
+                            postfix)
+
+    def _hive_path(self, script):
+        # Ugly hack to access hive scripts
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), s)
+
+    def _hive_param(self, param, value):
+        return "=".join([p.strip(), v.strip()])
+
+    def _download(self):
+        logger.debug("Launching dump download")
+        downloader = DumpDownloader(self.wikidb,
+                                    self.day,
+                                    self.xml_path,
+                                    self.name_node,
+                                    self.user,
+                                    self.download_dump_type,
+                                    self.download_success_flag,
+                                    self.download_no_check,
+                                    self.download_num_threads,
+                                    self.download_num_tries,
+                                    self.download_buffer_size,
+                                    self.download_timeout,
+                                    self.force)
+        downloader.run()
+
+    def _xmljson(self):
+        logger.debug("Launching xmljson conversion")
+        converter = XMLJSONConverter(self.xml_path,
+                                     self.json_path,
+                                     self.name_node,
+                                     self.queue,
+                                     self.xmljson_jar,
+                                     self.xmljson_class_,
+                                     self.xmljson_reducers,
+                                     self.xmljson_timeout,
+                                     self.xmljson_mapper_mb,
+                                     self.xmljson_mapper_mb_heap,
+                                     self.xmljson_reducer_mb,
+                                     self.xmljson_reducer_mb_heap,
+                                     self.force)
+        converter.run()
+
+    def _hive_create_fulltext_table(self):
+        logger.debug("Launchung HQLrunner for fulltext table creation")
+        hql_path = self._hive_path(HQL_SCRIPT_FULLTEXT_TABLE)
+        hql_params = [
+            self._hive_param(HQL_PARAM_HCATALOG_PATH, self.hive_hcatalog),
+            self._hive_param(HQL_PARAM_FULLTEXT_TABLE, self.fulltext_table),
+            self._hive_param(HQL_PARAM_DATA_PATH, self.json_path)
+        ]
+        hql_runner = HQLRunner(hql_path,
+                               hql_params,
+                               self.hive_server,
+                               self.hive_port,
+                               self.user,
+                               self.hive_database)
+        hql_runner.run()
+
+    def _hive_create_metadata_table(self):
+        logger.debug("Launching HQLrunner for metadata table creation")
+        hql_path = self._hive_path(HQL_SCRIPT_METADATA_TABLE)
+        hql_params = [
+            self._hive_param(HQL_PARAM_METADATA_TABLE, self.metadata_table),
+            self._hive_param(HQL_PARAM_DATA_PATH, self.meta_path)
+        ]
+        hql_runner = HQLRunner(hql_path,
+                               hql_params,
+                               self.hive_server,
+                               self.hive_port,
+                               self.user,
+                               self.hive_database)
+        hql_runner.run()
+
+    def _hive_load_metadata_table(self):
+        logger.debug("Launching HQLrunner loading metadata table")
+        hql_path = self._hive_path(HQL_SCRIPT_METADATA_LOAD)
+        hql_params = [
+            param_val(HQL_PARAM_HCATALOG_PATH, self.hive_hcatalog),
+            param_val(HQL_PARAM_QUEUE, self.queue),
+            param_val(HQL_PARAM_REDUCERS, self.hive_metadata_reducers),
+            param_val(HQL_PARAM_COMPRESSION, self.hive_metadata_compression),
+            param_val(HQL_PARAM_METADATA_TABLE, self.metadata_table),
+            param_val(HQL_PARAM_FULLTEXT_TABLE, self.fulltext_table)
+        ]
+        hql_runner = HQLRunner(hql_path,
+                               hql_params,
+                               self.hive_server,
+                               self.hive_port,
+                               self.user,
+                               self.hive_database)
+        hql_runner.run()
+
+    def run(self):
+        if not self.no_download:
+            self._download()
+
+        if not self.no_xmljson:
+            self._xmljson()
+
+        if not self.no_fulltext_table:
+            self._hive_create_fulltext_table()
+
+        if not self.no_metadata_table:
+            self._hive_create_metadata_table()
+
+        if not self.no_metadata_load:
+            self._hive_load_metadata_table()
+
+
 def main(args):
     logging.basicConfig(
         format="%(asctime)s %(levelname)s:%(name)s -- %(message)s"
     )
     logger.setLevel(logging.DEBUG if args["--debug"] else logging.INFO)
 
-    base_path = args["--base-path"]
     wikidb = args["<wikidb>"]
     day = args["<day>"]
-    hive_hcatalog = args["--hive-hcatalog"]
+
+    no_download = args["--no-download"]
+    no_xmljson = args["--no-xmljson"]
+    no_fulltext_table = args["--no-fulltext-table"]
+    no_metadata_table = args["--no-metadata-table"]
+    no_metadata_load = args["--no-metadata-load"]
+    base_path = args["--base-path"]
+    name_node = args["--name-node"]
+    user = args["--user"]
     queue = args["--queue"]
-    metadata_reducers = args["--metadata-reducers"]
-    metadata_compression = args["--metadata-compress"]
+    download_dump_type = args["--download-dump"]
+    download_success_flag = args["--download-flag"]
+    download_no_check = args["--download-no-check"]
+    download_num_threads = args["--download-threads"]
+    download_num_tries = args["--download-tries"]
+    download_buffer_size = args["--download-buffer"]
+    download_timeout = args["--download-timeout"]
+    xmljson_jar = args["--xmljson-jar"]
+    xmljson_class_ = args["--xmljson-class"]
+    xmljson_reducers = args["--xmljson-reducers"]
+    xmljson_timeout = args["--xmljson-timeout"]
+    xmljson_mapper_mb = args["--xmljson-map-mb"]
+    xmljson_mapper_mb_heap = args["--xmljson-map-mb-hp"]
+    xmljson_reducer_mb = args["--xmljson-red-mb"]
+    xmljson_reducer_mb_heap = args["--xmljson-red-mb-hp"]
+    hive_server = args["--hive-server"]
+    hive_port = args["--hive-port"]
+    hive_database = args["--hive-database"]
+    hive_hcatalo = args["--hive-hcatalog"]
+    hive_metadata_reducers = args["--hive-metadata-red"]
+    hive_metadata_compression = args["--hive-metadata-cpr"]
+    force = args["--force"]
 
-    wiki_path = lambda d: os.path.join(base_path, "{0}-{1}".format(
-        wikidb, day), d)
-    # Ugly hack to access hive scripts
-    hive_path = lambda s: os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), s)
-    param_val = lambda p, v: "=".join([p.strip(), v.strip()])
-    metadata_table = "{0}_{1}".format(wikidb, day)
-    fulltext_table = "{0}_fulltext".format(metadata_table)
-
-    wiki_xml = wiki_path(FOLDER_XMLBZ2)
-    wiki_json = wiki_path(FOLDER_JSONBZ2)
-    wiki_meta = wiki_path(FOLDER_METADATA)
-
-    if not args["--no-download"]:
-        logger.debug("Launching download_dump")
-        download_dump_args = copy.copy(args)
-        download_dump_args["<hdfs-path>"] = wiki_xml
-        download_dump.main(download_dump_args)
-
-    if not args["--no-xmljson"]:
-        logger.debug("Launching dump2revdocs")
-        dump2revdocs_args = copy.copy(args)
-        dump2revdocs_args["<input>"] = wiki_xml
-        dump2revdocs_args["<output>"] = wiki_json
-        dump2revdocs.main(dump2revdocs_args)
-
-    if not args["--no-fulltext-table"]:
-        logger.debug("Launch hql_runner.main for fulltext table creation")
-        hql_fulltext_table_args = copy.copy(args)
-        hql_fulltext_table_args["<hql>"] = hive_path(HQL_SCRIPT_FULLTEXT_TABLE)
-        hql_fulltext_table_args["<param>"] = [
-            param_val(HQL_PARAM_HCATALOG_PATH, hive_hcatalog),
-            param_val(HQL_PARAM_FULLTEXT_TABLE, fulltext_table),
-            param_val(HQL_PARAM_DATA_PATH, wiki_json)
-        ]
-        hql_runner.main(hql_fulltext_table_args)
-
-    if not args["--no-metadata-table"]:
-        logger.debug("Launch hql_runner.main for metadata table creation")
-        hql_metadata_table_args = copy.copy(args)
-        hql_metadata_table_args["<hql>"] = hive_path(HQL_SCRIPT_METADATA_TABLE)
-        hql_metadata_table_args["<param>"] = [
-            param_val(HQL_PARAM_METADATA_TABLE, metadata_table),
-            param_val(HQL_PARAM_DATA_PATH, wiki_meta)
-        ]
-        hql_runner.main(hql_metadata_table_args)
-
-    if not args["--no-metadata-load"]:
-        logger.debug("Launch hql_runner.main for metadata table load")
-        hql_metadata_load_args = copy.copy(args)
-        hql_metadata_load_args["<hql>"] = hive_path(HQL_SCRIPT_METADATA_LOAD)
-        hql_metadata_load_args["<param>"] = [
-            param_val(HQL_PARAM_HCATALOG_PATH, hive_hcatalog),
-            param_val(HQL_PARAM_QUEUE, queue),
-            param_val(HQL_PARAM_REDUCERS, metadata_reducers),
-            param_val(HQL_PARAM_COMPRESSION, metadata_compression),
-            param_val(HQL_PARAM_METADATA_TABLE, metadata_table),
-            param_val(HQL_PARAM_FULLTEXT_TABLE, fulltext_table)
-        ]
-        hql_runner.main(hql_metadata_load_args)
+    etl = WikiDumpEtl(no_download,
+                      no_xmljson,
+                      no_fulltext_table,
+                      no_metadata_table,
+                      no_metadata_load,
+                      wikidb,
+                      day,
+                      base_path,
+                      name_node,
+                      user,
+                      queue,
+                      download_dump_type,
+                      download_success_flag,
+                      download_no_check,
+                      download_num_threads,
+                      download_num_tries,
+                      download_buffer_size,
+                      download_timeout,
+                      xmljson_jar,
+                      xmljson_class_,
+                      xmljson_reducers,
+                      xmljson_timeout,
+                      xmljson_mapper_mb,
+                      xmljson_mapper_mb_heap,
+                      xmljson_reducer_mb,
+                      xmljson_reducer_mb_heap,
+                      hive_server,
+                      hive_port,
+                      hive_database,
+                      hive_hcatalog
+                      hive_metadata_reducers,
+                      hive_metadata_compression,
+                      force)
+    etl.run()
 
 
 if __name__ == "__main__":

@@ -32,6 +32,89 @@ import re
 logger = logging.getLogger(__name__)
 
 
+class HQLRunner(object):
+
+    def __init__(self,
+                 hql_path,
+                 params,
+                 server,
+                 port,
+                 user,
+                 database):
+
+        self.hql_path = hql_path
+        self.params = params
+        self.server = server
+        self.port = port
+        self.user = user
+        self.database = database
+
+        self._check_hql_script()
+        self._init_and_check_hql_params()
+
+    #
+    # Init Functions
+    #
+    def _check_hql_script(self):
+        logger.debug("Checking hql script is a file")
+        if not os.path.isfile(self.hql_path):
+            raise RuntimeError("Provided hql script is not a file")
+
+    def _init_and_check_hql_params(self):
+        logger.debug("Checking provided hql params match hql script ones")
+
+        self.hql_params = {}
+        if self.params:
+            self.hql_params = dict(p.split("=")for p in self.params)
+
+        param_pattern = re.compile("\$\{(\w+)\}")
+        wrong_params = {}
+
+        with open(self.hql_path, "r") as hql_file:
+            hql = hql_file.read()
+            for m in param_pattern.finditer(hql):
+                param = m.group(1)
+                if param not in self.hql_params or not hql_params[param]:
+                    wrong_params[param] = True
+
+        if wrong_params:
+            raise RuntimeError("Undefined parameters: {0}".format(
+                ", ".join(wrong_params.keys())))
+
+    #
+    # Run Functions
+    #
+    def run(self):
+        self._hql_script_to_actions()
+        self._execute_actions()
+
+    def _hql_script_to_actions(self):
+        logger.debug("Preparing hql script")
+        comment_pattern = re.compile("--.*\n")
+
+        uncommented_hql = with open(self.hql_path, "r") as hql_file:
+            comment_pattern.sub("", hql_file.read())
+
+        parameterized_hql = uncommented_hql
+        for param, value in hql_params.iteritems():
+            parameterized_hql = parameterized_hql.replace(
+                "${{{0}}}".format(param), value)
+
+        hql_actions = [s.strip() for s in parameterized_hql.split(";")]
+        self.hql_actions = filter(bool, hql_actions)
+
+    def _execute_actions(self):
+        with dbapi.connect(host=server,
+                           port=port,
+                           user=user,
+                           database=database,
+                           auth_mechanism="PLAIN") as conn:
+            cursor = conn.cursor()
+            for action in self.hql_actions:
+                logger.debug("Executing hql action:\n{0}\n".format(action))
+                cursor.execute(action)
+
+
 def main(args):
     logging.basicConfig(
         format="%(asctime)s %(levelname)s:%(name)s -- %(message)s"
@@ -39,60 +122,19 @@ def main(args):
     logger.setLevel(logging.DEBUG if args["--debug"] else logging.INFO)
 
     hql_path = args["<hql>"]
-    if args["<param>"]:
-        hql_params = dict(param.split("=") for param in args["<param>"])
-    else:
-        hql_params = {}
-
+    params = args["<param>"]
     server = args["--hive-server"]
     port = int(args["--hive-port"])
     user = args["--user"]
     database = args["--hive-database"]
 
-    logger.debug("Checking hql path and parameters")
-    check_hql(hql_path, hql_params)
-
-    run(hql_path, hql_params, server, port, user, database)
-
-
-def check_hql(hql_path, hql_params):
-    if not os.path.isfile(hql_path):
-        raise RuntimeError("hql path is not a file.")
-    param_pattern = re.compile("\$\{(\w+)\}")
-    wrong_params = {}
-    with open(hql_path, "r") as hql_file:
-        hql = hql_file.read()
-        for m in param_pattern.finditer(hql):
-            param = m.group(1)
-            if param not in hql_params or not hql_params[param]:
-                wrong_params[param] = True
-    if wrong_params:
-        raise RuntimeError(
-            "Undefined parameters: {0}".format(", ".join(wrong_params.keys())))
-
-
-def run(hql_path, hql_params, server, port, user, database):
-    logger.debug("Preparing hql script")
-    hql_actions = hql_script_to_actions(hql_path, hql_params)
-
-    with dbapi.connect(host=server, port=port, user=user,
-                       database=database, auth_mechanism="PLAIN") as conn:
-        cursor = conn.cursor()
-        for action in hql_actions:
-            logger.debug("Executing hql action:\n{0}\n".format(action))
-            cursor.execute(action)
-
-    logger.debug("Done !")
-
-
-def hql_script_to_actions(hql_path, hql_params):
-    comment_pat = re.compile("--.*\n")
-    hql = None
-    with open(hql_path, "r") as hql_file:
-        hql = comment_pat.sub("", hql_file.read())
-    for param, value in hql_params.iteritems():
-        hql = hql.replace("${{{0}}}".format(param), value)
-    return filter(bool, [s.strip() for s in hql.split(";")])
+    hql_runner = HQLRunner(hql_path
+                           params,
+                           server,
+                           port,
+                           user,
+                           database)
+    hql_runner.run()
 
 
 if __name__ == "__main__":
