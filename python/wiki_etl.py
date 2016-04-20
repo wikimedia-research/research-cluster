@@ -60,7 +60,7 @@ Options:
     --xmljson-jar=<path>     XML to JSON mapreduce job jar path
                                [default: /wmf/jars/wikihadoop-0.2.jar]
     --xmljson-class=<name>   XML to JSON mapreduce job class
-                               [default: org.wikimedia.wikihadoop.job.JsonRevisionsSortedPerPage]
+                               [default: org.wikimedia.wikihadoop.job.JsonRevisionsSortedPerPageMapReduce]
     --xmljson-reducers=<n>   XML to JSON mapreduce number of reducers
                                (defines the maximum number of output files)
                                [default: 2000]
