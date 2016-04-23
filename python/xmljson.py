@@ -1,6 +1,6 @@
 """
 Usage:
-    dump2revdocs [options] <input> <output>
+    xmljson [options] <input> <output>
 
 Converts a MediaWiki XML dump to sorted, flattened JSON documents.
 
@@ -101,41 +101,45 @@ class XMLJSONConverter(object):
 
     def run(self):
         self._configure_hdfs_client()
-        if self._prepare_hdfs():
-            try:
-                self._execute_hadoop_job()
-            except KeyboardInterrupt:
-                logger.error(ERROR_MSG)
-                raise RuntimeError("Job interrupted")
-            if not self._check_success_file():
-                raise RuntimeError("No success file after hadoop job, " +
-                                   "something probably went wrong")
+
+        logger.debug("Checking xmljson input path has success flag")
+        if not self._check_success_file(self.input_path):
+            logger.error("xmljson input path {0} has no success flag".format(
+                self.input_path))
+            raise RuntimeError("No input success flag")
+
+        if self._check_success_file(self.output_path):
+            if self.force:
+                try:
+                    self.hdfs_client.delete(self.output_path, recursive=True)
+                except hdfs.HdfsError as e:
+                    logger.error(e)
+                    raise RuntimeError("Problem preparing HDFS")
+            else:
+                logger.info("Success file already existing in output path," +
+                            " not recomputing")
+                return
+
+        try:
+            self._execute_hadoop_job()
+        except KeyboardInterrupt:
+            logger.error(ERROR_MSG)
+            raise RuntimeError("Job interrupted")
+
+        if not self._check_success_file(self.output_path):
+            raise RuntimeError("No success file after hadoop job, " +
+                               "something probably went wrong")
 
     def _configure_hdfs_client(self):
         name_node = self.name_node
         user = self.user
         self.hdfs_client = hdfs.client.InsecureClient(name_node, user=user)
 
-    def _prepare_hdfs(self):
-        logger.debug("Preparing HDFS for xmljson")
-        if self._check_success_file():
-            if not self.force:
-                logger.info("Success file already existing in output path," +
-                            " not recomputing")
-                return False
-        try:
-            self.hdfs_client.delete(self.output_path, recursive=True)
-        except hdfs.HdfsError as e:
-            logger.error(e)
-            raise RuntimeError("Problem preparing HDFS.")
-        return True
-
-    def _check_success_file(self):
-        logger.debug("Checking for success file in {0}".format(
-            self.output_path))
+    def _check_success_file(self, path):
+        logger.debug("Checking for success file in {0}".format(path))
         try:
             self.hdfs_client.content(
-                os.path.join(self.output_path, "_SUCCESS"))
+                os.path.join(path, "_SUCCESS"))
             return True
         except hdfs.HdfsError:
             return False

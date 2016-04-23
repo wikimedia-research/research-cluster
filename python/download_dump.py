@@ -46,7 +46,7 @@ import sys
 import docopt
 import hdfs
 import requests
-# from requests.packages.urllib3.exceptions import InsecurePlatformWarning
+from requests.packages.urllib3.exceptions import InsecurePlatformWarning
 
 import hashlib
 import re
@@ -57,7 +57,7 @@ import Queue
 from hdfs_downloader import HDFSDownloader
 
 
-# requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
+requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
 logger = logging.getLogger(__name__)
 
 

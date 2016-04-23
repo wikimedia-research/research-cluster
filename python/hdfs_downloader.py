@@ -6,14 +6,14 @@ import os.path
 
 import hdfs
 import requests
-# from requests.packages.urllib3.exceptions import InsecurePlatformWarning
+from requests.packages.urllib3.exceptions import InsecurePlatformWarning
 import hashlib
 
 import multiprocessing
 import Queue
 
 
-# requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
+requests.packages.urllib3.disable_warnings(InsecurePlatformWarning)
 logger = logging.getLogger(__name__)
 
 
