@@ -1,20 +1,36 @@
 -- Load a metadata table from a revdocs one
 --
 -- Parameters:
---     <revdocs_table>      The fully qualified name of the revdocs table
---                          to extract data from
---     <metadata_table>     The fully qualified name of the metadata table
---                          to insert data in
+--     <hcatalog_path>       The path where to find hive-hcatalog-core jar
+--                             on your cluster (needed for handling json)
+--     <queue>               The hadoop queue onto which the job should be run
+--                             If you don't know, 'default' might do
+--     <reducers>            The number of reducers of the job, that defines
+--                             the number of files to output
+--     <compression>         The compression scheme to be used for parquet
+--                             files (usual values are SNAPPY and GZIP)
+--     <revdocs_table>       The fully qualified name of the revdocs table
+--                             to extract data from
+--     <metadata_table>      The fully qualified name of the metadata table
+--                             to insert data in
+
 --
 -- Usage
 --     hive -f load_metadata_from_revdocs.hql          \
+--          -d hcatalog_path=/opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar \
+--          -d queue=default                           \
+--          -d reducers=64                             \
+--          -d compression=SNAPPY                      \
 --          -d revdocs_table=enwiki_20150923_fulltext  \
---          -d metadata_table=enwiki_20150923
+--          -d metadata_table=enwiki_20150923          \
 
-ADD JAR /opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar;
 
-SET parquet.compression      = SNAPPY;
-SET mapreduce.job.reduces    = 64;
+ADD JAR ${hcatalog_path};
+
+set mapred.job.queue.name    = ${queue};
+SET mapreduce.job.reduces    = ${reducers};
+SET parquet.compression      = ${compression};
+
 
 INSERT OVERWRITE TABLE ${metadata_table}
 SELECT

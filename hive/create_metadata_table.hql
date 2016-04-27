@@ -2,9 +2,9 @@
 -- If the table already exists, drop it first.
 --
 -- Parameters:
---     <metadata-table>    The fully qualified name of
---                         the metadata table to create
---     <data-path>         The path to the table data folder
+--     <metadata-table>      The fully qualified name of
+--                             the metadata table to create
+--     <data-path>           The path to the table data folder
 --
 -- Usage
 --     hive -f create_metadata_table.hql   \
