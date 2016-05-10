@@ -28,7 +28,7 @@ Options:
                                from fulltext one
 
     --base-path=<path>       Base path where to store the files
-                               [default: /wikimedia_data]
+                               [default: /wmf/data]
 
     --name-node=<host>       Host of the cluster name-node to use
                                [default: http://nn-ia.s3s.altiscale.com:50070]
