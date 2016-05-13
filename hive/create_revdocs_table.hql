@@ -37,7 +37,7 @@ CREATE EXTERNAL TABLE IF NOT EXISTS ${revdocs_table} (
     model STRING,
     format STRING
 )
-ROW FORMAT SERDE 'org.apache.hcatalog.data.JsonSerDe'
+ROW FORMAT SERDE 'org.apache.hive.hcatalog.data.JsonSerDe'
 STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat'
 OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
 LOCATION '${data_path}'

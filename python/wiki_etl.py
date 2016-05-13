@@ -78,7 +78,9 @@ Options:
     --hive-database=<db>     Hive database against which to run the script
                                [default: wmf_dumps]
     --hive-hcatalog=<path>   Path to the hive-hcatalog-core jar file
-                               [default: /opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar]
+                               [default: /opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-1.2.0.jar]
+    --hive-metastore=<path>   Path to the hive-metastore jar file
+                               [default: /opt/hive/lib/hive-metastore-1.2.0.jar]
     --hive-metadata-red=<n>  Number of reducers used to extract metadata from
                                json data (defines the number of output files)
                                [default: 64]
@@ -113,6 +115,7 @@ HQL_SCRIPT_METADATA_TABLE = "../hive/create_metadata_table.hql"
 HQL_SCRIPT_METADATA_LOAD = "../hive/load_metadata_from_revdocs.hql"
 
 HQL_PARAM_HCATALOG_PATH = "hcatalog_path"
+HQL_PARAM_METASTORE_PATH = "metastore_path"
 HQL_PARAM_FULLTEXT_TABLE = "revdocs_table"
 HQL_PARAM_METADATA_TABLE = "metadata_table"
 HQL_PARAM_DATA_PATH = "data_path"
@@ -155,6 +158,7 @@ class WikiDumpEtl(object):
                  hive_port,
                  hive_database,
                  hive_hcatalog,
+                 hive_metastore,
                  hive_metadata_reducers,
                  hive_metadata_compression,
                  force,
@@ -192,6 +196,7 @@ class WikiDumpEtl(object):
         self.hive_port = hive_port
         self.hive_database = hive_database
         self.hive_hcatalog = hive_hcatalog
+        self.hive_metastore = hive_metastore
         self.hive_metadata_reducers = hive_metadata_reducers
         self.hive_metadata_compression = hive_metadata_compression
         self.force = force
@@ -300,6 +305,7 @@ class WikiDumpEtl(object):
         hql_path = self._hive_path(HQL_SCRIPT_METADATA_LOAD)
         hql_params = [
             self._hive_param(HQL_PARAM_HCATALOG_PATH, self.hive_hcatalog),
+            self._hive_param(HQL_PARAM_METASTORE_PATH, self.hive_metastore),
             self._hive_param(HQL_PARAM_QUEUE, self.queue),
             self._hive_param(HQL_PARAM_REDUCERS, self.hive_metadata_reducers),
             self._hive_param(HQL_PARAM_COMPRESSION,
@@ -366,6 +372,7 @@ def main(args):
     hive_port = args["--hive-port"]
     hive_database = args["--hive-database"]
     hive_hcatalog = args["--hive-hcatalog"]
+    hive_metastore = args["--hive-metastore"]
     hive_metadata_reducers = args["--hive-metadata-red"]
     hive_metadata_compression = args["--hive-metadata-cpr"]
     force = args["--force"]
@@ -402,6 +409,7 @@ def main(args):
                       hive_port,
                       hive_database,
                       hive_hcatalog,
+                      hive_metastore,
                       hive_metadata_reducers,
                       hive_metadata_compression,
                       force,

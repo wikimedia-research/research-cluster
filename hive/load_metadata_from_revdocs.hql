@@ -18,6 +18,7 @@
 -- Usage
 --     hive -f load_metadata_from_revdocs.hql          \
 --          -d hcatalog_path=/opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar \
+--          -d metastore_path=/opt/hive/lib/hive-metastore-1.2.0.jar \
 --          -d queue=default                           \
 --          -d reducers=64                             \
 --          -d compression=SNAPPY                      \
@@ -26,6 +27,8 @@
 
 
 ADD JAR ${hcatalog_path};
+ADD JAR ${metastore_path};
+
 
 set mapred.job.queue.name    = ${queue};
 SET mapreduce.job.reduces    = ${reducers};
