@@ -17,7 +17,7 @@
 --
 -- Usage
 --     hive -f load_metadata_from_revdocs.hql          \
---          -d hcatalog_path=/opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-0.13.1.jar \
+--          -d hcatalog_path=/opt/hive/hcatalog/share/hcatalog/hive-hcatalog-core-1.2.0.jar \
 --          -d metastore_path=/opt/hive/lib/hive-metastore-1.2.0.jar \
 --          -d queue=default                           \
 --          -d reducers=64                             \
@@ -30,7 +30,7 @@ ADD JAR ${hcatalog_path};
 ADD JAR ${metastore_path};
 
 
-set mapred.job.queue.name    = ${queue};
+SET mapred.job.queue.name    = ${queue};
 SET mapreduce.job.reduces    = ${reducers};
 SET parquet.compression      = ${compression};
 
@@ -43,7 +43,10 @@ SELECT
     page_title,
     page_namespace,
     page_redirect,
-    page_restrictions,
+    CASE WHEN size(page_restrictions) = 0
+        THEN NULL
+        ELSE page_restrictions
+    END AS page_restrictions,
     user_id,
     user_text,
     minor,
@@ -63,7 +66,10 @@ GROUP BY
     page_title,
     page_namespace,
     page_redirect,
-    page_restrictions,
+    CASE WHEN size(page_restrictions) = 0
+        THEN NULL
+        ELSE page_restrictions
+    END,
     user_id,
     user_text,
     minor,
